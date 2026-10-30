@@ -1,5 +1,5 @@
 # Presentation Hub
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/8c174b5d-2b2f-46bb-8081-42c691cd2c83" />
+<img width="644" height="866" alt="image" src="https://github.com/user-attachments/assets/faef2c8f-48c9-43e4-aad4-964a02dd15de" />
 
 A DMS plugin for presenting on an external display in Niri. Choose a window or duplicate a display, then control the audience screen from one place. A small C++/Qt core talks to Niri independently of DMS; the QML frontend provides the widget and background watcher.
 
