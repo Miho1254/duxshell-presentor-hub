@@ -57,6 +57,10 @@ Other features work without `wl-mirror`. The plugin checks for it on the DMS ses
 
 There is no Store-based updater yet. The installer does not replace an existing copy or symlink. Before updating or uninstalling, disable the plugin, end any presentation session, and inspect the existing directory; remove or move it only if you intend to replace or uninstall it. Then use the installer again with the desired version for an update. This preserves existing installations instead of silently overwriting user files.
 
+### Store installation (if listed in the future)
+
+The DMS Store clones the repository but does not build its C++ core. After a Store install, open the widget and choose **Build core** when prompted. This explicit action requires CMake, a C++17 compiler, and Qt 6 development files; it does not install packages or download binaries. For Arch Linux / CachyOS, install `cmake`, `base-devel`, and `qt6-base` first. The core is built locally from this repository. `wl-mirror` remains optional for Duplicate. A Store entry and its availability are subject to registry review.
+
 ## Using the widget
 
 1. Select the **audience display**.

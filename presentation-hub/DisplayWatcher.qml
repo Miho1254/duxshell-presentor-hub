@@ -14,6 +14,9 @@ PluginComponent {
     id: root
 
     readonly property string corePath: decodeURIComponent(Qt.resolvedUrl("bin/presentation-hub-core").toString().replace(/^file:\/\//, ""))
+    readonly property string buildScript: decodeURIComponent(Qt.resolvedUrl("build-core.sh").toString().replace(/^file:\/\//, ""))
+    property string coreState: "checking"
+    property bool buildingCore: false
     property var knownOutputs: []
     property bool initialized: false
     property bool checking: false
@@ -133,6 +136,36 @@ PluginComponent {
         });
         const filter = String(PluginService.loadPluginData("presentationHub", "browserFilter", "all") || "all");
         return filter === "only" ? list.includes(app) : filter === "exclude" ? !list.includes(app) : true;
+    }
+
+    function publishCore(state, message) {
+        coreState = state;
+        PluginService.setGlobalVar("presentationHub", "core", { state: state, message: message || "" });
+    }
+
+    // Store installs do not build binaries. Never run a build until requested.
+    function checkCore() {
+        if (buildingCore) return;
+        publishCore("checking", "Checking the core…");
+        Proc.runCommand("presentationHub.coreCheck", ["sh", "-c", "test -x \"$1\"", "presentation-hub", corePath], (out, code) => {
+            if (code === 0) {
+                root.publishCore("ready", "");
+                root.refreshOutputs();
+            } else {
+                root.publishCore("missing", "Build the core to use Presentation Hub. This needs CMake, a C++17 compiler and Qt 6 development files.");
+            }
+        });
+    }
+
+    function buildCore() {
+        if (buildingCore) return;
+        buildingCore = true;
+        publishCore("building", "Building the core on this computer…");
+        Proc.runCommand("presentationHub.buildCore", ["sh", buildScript], (out, code) => {
+            root.buildingCore = false;
+            if (code === 0) root.checkCore();
+            else root.publishCore("error", "Build failed. Check CMake, your C++ compiler and Qt 6 development files, then try again. If the source is missing, reinstall from the repository.");
+        }, 0, Proc.noTimeout);
     }
 
     function checkMirrorDependency(showNotice) {
@@ -279,7 +312,7 @@ PluginComponent {
     // Proc uses a stable ID, and `checking` prevents overlapping polls.
     // This keeps the 3-second watchdog bounded when Niri is slow to reply.
     function refreshOutputs() {
-        if (checking)
+        if (checking || coreState !== "ready")
             return;
 
         checking = true;
@@ -403,7 +436,7 @@ PluginComponent {
         publishMirror("idle", "");
         publishCover();
         publishSession();
-        refreshOutputs();
+        checkCore();
         checkMirrorDependency(true);
     }
 
@@ -599,6 +632,7 @@ PluginComponent {
                 "cover": PluginService.getGlobalVar("presentationHub", "cover", {
                     "active": false
                 }),
+                "core": PluginService.getGlobalVar("presentationHub", "core", { state: "checking" }),
                 "ready": root.initialized,
                 "outputs": root.knownOutputs,
                 "checks": root.checks,
@@ -612,6 +646,12 @@ PluginComponent {
                 }),
                 "mirrorDependency": PluginService.getGlobalVar("presentationHub", "mirrorDependency", "checking")
             });
+        }
+
+        function buildCore() : string {
+            if (root.buildingCore) return "Build already running";
+            root.buildCore();
+            return "Building core";
         }
 
         function startPresentation(output: string, mode: string, source: string, windowId: string, dnd: string) : string {

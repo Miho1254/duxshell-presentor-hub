@@ -53,7 +53,7 @@ trap 'exit 1' HUP INT TERM
 mkdir -p "$work_dir/source/core" "$work_dir/source/presentation-hub"
 cp "$project_dir/CMakeLists.txt" "$work_dir/source/"
 cp "$project_dir/core/main.cpp" "$project_dir/core/presentation_rules.h" "$work_dir/source/core/"
-cp "$project_dir/presentation-hub/"*.qml "$project_dir/presentation-hub/plugin.json" "$work_dir/source/presentation-hub/"
+cp "$project_dir/presentation-hub/"*.qml "$project_dir/presentation-hub/plugin.json" "$project_dir/presentation-hub/build-core.sh" "$work_dir/source/presentation-hub/"
 
 printf '%s\n' 'Building Presentation Hub core...'
 cmake -S "$work_dir/source" -B "$work_dir/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF

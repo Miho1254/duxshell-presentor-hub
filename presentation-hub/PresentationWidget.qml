@@ -98,6 +98,7 @@ PluginComponent {
             property string message: ""
             property bool messageIsError: true
             property bool busy: false
+            property var coreInfo: PluginService.getGlobalVar("presentationHub", "core", { state: "checking", message: "" })
             property string mode: PluginService.getGlobalVar("presentationHub", "session", {
                 "active": false
             }).active ? "controls" : "window"
@@ -123,6 +124,7 @@ PluginComponent {
             readonly property string corePath: decodeURIComponent(Qt.resolvedUrl("bin/presentation-hub-core").toString().replace(/^file:\/\//, ""))
 
             function refresh() {
+                if (coreInfo.state !== "ready") return;
                 busy = true;
                 message = "";
                 messageIsError = true;
@@ -307,6 +309,12 @@ PluginComponent {
                 });
             }
 
+            function requestCoreBuild() {
+                Proc.runCommand("presentationHub.requestCoreBuild", ["dms", "ipc", "call", "presentationHub", "buildCore"], (out, code) => {
+                    if (code !== 0) panel.message = "Could not start the build. Check that the plugin is enabled.";
+                });
+            }
+
             function checkMirrorDependency() {
                 Proc.runCommand("presentationHub.checkMirror", ["dms", "ipc", "call", "presentationHub", "checkMirror"], (out, code) => {
                     if (code !== 0)
@@ -351,6 +359,10 @@ PluginComponent {
 
             Connections {
                 function onGlobalVarChanged(id, name) {
+                    if (id === "presentationHub" && name === "core") {
+                        panel.coreInfo = PluginService.getGlobalVar("presentationHub", "core", { state: "checking", message: "" });
+                        if (panel.coreInfo.state === "ready") panel.refresh();
+                    }
                     if (id === "presentationHub" && name === "mirror")
                         panel.mirrorInfo = PluginService.getGlobalVar("presentationHub", "mirror", {
                         "state": "idle",
@@ -403,7 +415,16 @@ PluginComponent {
                         width: contentViewport.width
                         spacing: Theme.spacingM
 
+                        Column {
+                            visible: panel.coreInfo.state !== "ready"
+                            width: parent.width; spacing: Theme.spacingS
+                            StyledText { text: "Set up Presentation Hub"; color: Theme.surfaceText; font.pixelSize: Theme.fontSizeMedium; font.weight: Font.DemiBold }
+                            StyledText { width: parent.width; text: panel.coreInfo.message || "Checking the core…"; color: panel.coreInfo.state === "error" ? Theme.error : Theme.surfaceVariantText; wrapMode: Text.WordWrap }
+                            DButton { visible: panel.coreInfo.state === "missing" || panel.coreInfo.state === "error"; text: "Build core"; iconName: "build"; onClicked: panel.requestCoreBuild() }
+                        }
+
                         Rectangle {
+                            visible: panel.coreInfo.state === "ready"
                             width: parent.width
                             height: 54
                             radius: Theme.cornerRadius
@@ -462,6 +483,7 @@ PluginComponent {
                         }
 
                         Rectangle {
+                            visible: panel.coreInfo.state === "ready"
                             width: parent.width
                             height: 48
                             radius: Theme.cornerRadius
@@ -506,7 +528,7 @@ PluginComponent {
 
                             readonly property real columnWidth: width
 
-                            visible: panel.mode !== "controls"
+                            visible: panel.coreInfo.state === "ready" && panel.mode !== "controls"
                             width: parent.width
                             spacing: Theme.spacingL
 
@@ -1045,7 +1067,7 @@ PluginComponent {
                         }
 
                         Column {
-                            visible: panel.mode === "controls"
+                            visible: panel.coreInfo.state === "ready" && panel.mode === "controls"
                             width: parent.width
                             spacing: Theme.spacingL
 
