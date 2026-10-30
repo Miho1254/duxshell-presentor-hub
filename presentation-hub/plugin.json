@@ -5,8 +5,20 @@
   "version": "0.1.0",
   "author": "Presentation Hub contributors",
   "icon": "present_to_all",
-  "type": "widget",
-  "component": "./PresentationWidget.qml",
+  "type": "composite",
   "requires_dms": ">=2.0.0",
-  "permissions": ["process"]
+  "permissions": [
+    "process",
+    "settings_read",
+    "settings_write"
+  ],
+  "components": {
+    "daemon": "./DisplayWatcher.qml",
+    "widget": "./PresentationWidget.qml"
+  },
+  "capabilities": [
+    "daemon",
+    "dankbar-widget"
+  ],
+  "settings": "./PresentationSettings.qml"
 }

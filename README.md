@@ -1,28 +1,56 @@
-# DMS + Niri presentation plugin references
+# Presentation Hub
 
-The agreed initial scope is:
+A Niri-first tool for moving windows to an external display. The core is a C++/Qt program independent of DMS; the DMS frontend is a QML widget.
 
-1. Manually select a window and move it to an external display.
-2. Suggest moving a likely presentation window to the external display and wait for the user to confirm.
+## Requirements
 
-English is the default language for project documentation and the plugin interface. Other languages can be added later through localization.
+- A running Niri session
+- Qt 6 Core and Network at runtime
+- CMake 3.20+, a C++17 compiler and Qt 6 development packages to build
+- DMS 2.0 or newer for the widget
 
-## Official DMS template
+## Build
 
-[`templates/dux-composite-v2`](templates/dux-composite-v2/) is an unchanged copy of `quickshell/PLUGINS/ExampleCompositePlugin` from [Dux Shell v2.0.0](https://github.com/duxlabs-dev/dux-shell/tree/v2.0.0/quickshell/PLUGINS/ExampleCompositePlugin), commit `9b413296b16721f7679fb62e624cb1ed2433fa58`. The repository's MIT license and `THEME_REFERENCE.md` from the same version have been added.
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
 
-The example includes a daemon, a bar widget with a popout, a desktop widget, and settings. It is an upstream example, not a presentation plugin: its daemon watches wallpaper changes and its widgets have unrelated behavior. For implementation, use the daemon, widget, and settings structure as a starting point and remove unrelated example features.
+The build creates `presentation-hub/bin/presentation-hub-core`, which is ignored by Git and used by the widget. Build for each target machine before using the plugin. The binary needs compatible Qt runtime libraries.
 
-## Niri reference
+## Core CLI
 
-[`references/niri-display-settings`](references/niri-display-settings/) is a copy of [Niri Display Settings](https://github.com/hthienloc/dms-niri-display-settings), commit `c8aa9c4`, with its MIT license included. The upstream repository is archived. It is a reference for composite plugin structure, display management UI, and Niri commands, not an official Dux template or a guarantee of compatibility with DMS 2.0.0. Check individual APIs before reuse.
+The executable uses `$NIRI_SOCKET` directly and prints JSON to stdout and errors to stderr:
 
-Neither copy has been installed, enabled, or tested in DMS. See the [official plugin development guide](https://duxlabs.dev/docs/dms/plugin-development).
+```sh
+presentation-hub/bin/presentation-hub-core snapshot
+presentation-hub/bin/presentation-hub-core move --window 42 --output HDMI-A-1
+```
 
-## Manual window mover prototype
+`snapshot` lists active outputs and windows. `move` verifies that the selected window and output exist before requesting the move and checks the resulting output afterward. State can change between queries; failure to confirm does not guarantee that the move did not occur. The snapshot uses separate IPC requests and is not atomic.
 
-[`presentation-hub`](presentation-hub/) is the first DMS 2.0 / Niri prototype. It lists active outputs and windows, then moves the chosen window to the chosen output using `niri msg action move-window-to-monitor --id`. It does not change display configuration or automatically detect presentations. Refresh the list after connecting or disconnecting a display. Window and output state can change between selection and the move; failures are shown in the popout.
+## DMS widget
 
-Niri exposes windows, workspaces, and outputs over IPC. A window belongs to a workspace; its workspace identifies its current output. See the [Niri IPC guide](https://github.com/niri-wm/niri/blob/main/docs/wiki/IPC.md) and [workspace guide](https://github.com/niri-wm/niri/wiki/Workspaces).
+After building, link `presentation-hub` into `~/.config/dms/plugins/`, enable Presentation Hub in DMS Settings → Plugins, and add its widget to the bar. Choose a destination and window, then select **Move window**. Refresh after connecting or disconnecting a display.
 
-To try the prototype, link the `presentation-hub` directory into `~/.config/dms/plugins/`, scan and enable it in DMS Settings → Plugins, then add its widget to the bar. Manual window movement through the widget was confirmed with an external display on DMS 2.0.0 and Niri 26.04.
+The background component checks active outputs approximately every three seconds. When an external output appears after the initial scan, a DMS dialog asks whether to use it for presentations, including when Do Not Disturb is enabled. Choosing **Use for presentations** remembers the output name; **Not now** makes no change. The widget selects the remembered output when it is available, and selecting a different output in the widget updates that preference. The prompt does not move windows or change display configuration. At startup, displays already connected are treated as the baseline and do not trigger a prompt. A disconnect shorter than the polling interval may be missed. Internal display detection uses connector-name prefixes and may not recognize every device.
+
+The same periodic snapshot checks new or changed windows. With a connected presentation display selected, the plugin can suggest moving a likely presentation window; it never moves one without confirmation. The title-based rule is limited to LibreOffice slideshow windows and remains experimental; other applications may be missed. Windows already recognized at startup are not suggested; dismissing suppresses a suggestion while it remains a candidate.
+
+The DMS frontend watches Wayland fullscreen state for known browsers and offers to move fullscreen browser windows, including videos and other non-presentation content. It waits for fullscreen to remain active for about half a second before offering. Canva and other browser presentations are not suggested based on titles alone. The frontend joins Wayland windows to Niri by exact app ID and title and skips ambiguous matches; this detection is currently DMS-specific and is not provided by the standalone core. Niri's windowed fullscreen may also trigger it. A window already fullscreen at plugin startup is treated as the baseline. Dismissing the prompt suppresses another suggestion until the window exits fullscreen.
+
+Additional browser app IDs can be entered in Presentation Hub's plugin settings as a comma-separated list. Custom IDs are matched exactly, case-insensitively. Use `niri msg windows` to find an application's ID.
+
+## Verification
+
+```sh
+sh tests/smoke.sh
+ctest --test-dir build --output-on-failure
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The smoke checks require `jq` and a running Niri session. The Python integration tests use a disposable fake Niri socket and do not require a running compositor. The DMS widget has been tested with Firefox and Canva on Niri 26.04; other browsers and LibreOffice still require live verification.
+
+References: [DMS composite example](https://github.com/duxlabs-dev/dux-shell/tree/v2.0.0/quickshell/PLUGINS/ExampleCompositePlugin), [Niri Display Settings](https://github.com/hthienloc/dms-niri-display-settings), [Niri IPC](https://github.com/niri-wm/niri/blob/main/docs/wiki/IPC.md). Original reference copies remain in Git history.
+
+Next: validate and refine the detection rules against real Canva and LibreOffice presentation sessions.

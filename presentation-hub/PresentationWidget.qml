@@ -22,49 +22,40 @@ PluginComponent {
             detailsText: "Move a window to another display"
             property var outputs: []
             property var windows: []
-            property var workspaces: []
             property string target: ""
             property var selectedWindow: null
             property string message: ""
             property bool busy: false
 
+            // Resolve relative to this QML file so the plugin works from a symlink too.
+            readonly property string corePath: decodeURIComponent(Qt.resolvedUrl("bin/presentation-hub-core").toString().replace(/^file:\/\//, ""))
+
             function refresh() {
                 busy = true
                 message = ""
-                Proc.runCommand("presentationHub.outputs", ["niri", "msg", "--json", "outputs"], (out, code) => {
-                    if (code !== 0) { panel.busy = false; panel.message = "Cannot connect to Niri. Check your session and try again."; return }
+                Proc.runCommand("presentationHub.snapshot", [corePath, "snapshot"], (out, code) => {
+                    panel.busy = false
+                    if (code !== 0) { panel.message = "Cannot read Niri state. Check the Niri session and build the core, then refresh."; return }
                     try {
                         const data = JSON.parse(out)
-                        panel.outputs = Object.values(data).filter(o => o.logical !== null).sort((a, b) => a.name.localeCompare(b.name))
-                        if (!panel.outputs.some(o => o.name === panel.target)) panel.target = ""
-                    } catch (e) { panel.busy = false; panel.message = "Could not read display information."; return }
-                    Proc.runCommand("presentationHub.workspaces", ["niri", "msg", "--json", "workspaces"], (out, code) => {
-                        if (code !== 0) { panel.busy = false; panel.message = "Could not read workspaces."; return }
-                        try { panel.workspaces = JSON.parse(out) } catch (e) { panel.busy = false; panel.message = "Could not read workspaces."; return }
-                        Proc.runCommand("presentationHub.windows", ["niri", "msg", "--json", "windows"], (out, code) => {
-                            panel.busy = false
-                            if (code !== 0) { panel.message = "Could not read windows."; return }
-                            try {
-                                panel.windows = JSON.parse(out)
-                                if (panel.selectedWindow !== null && !panel.windows.some(w => w.id === panel.selectedWindow)) panel.selectedWindow = null
-                            } catch (e) { panel.message = "Could not read windows." }
-                        })
-                    })
+                        panel.outputs = data.outputs
+                        panel.windows = data.windows
+                        if (!panel.outputs.some(o => o.name === panel.target)) {
+                            const preferred = pluginService.loadPluginData("presentationHub", "presentationOutput", "")
+                            panel.target = panel.outputs.some(o => o.name === preferred) ? preferred : ""
+                        }
+                        if (panel.selectedWindow !== null && !panel.windows.some(w => w.id === panel.selectedWindow)) panel.selectedWindow = null
+                    } catch (e) { panel.message = "Could not read display and window information." }
                 })
-            }
-            function outputForWindow(window) {
-                const workspace = workspaces.find(w => w.id === window.workspace_id)
-                return workspace && workspace.output ? workspace.output : "Unknown display"
             }
             function move() {
                 if (selectedWindow === null || !target || busy) return
                 busy = true
-                Proc.runCommand("presentationHub.move", ["niri", "msg", "action", "move-window-to-monitor", "--id", String(selectedWindow), target], (out, code) => {
+                Proc.runCommand("presentationHub.move", [corePath, "move", "--window", String(selectedWindow), "--output", target], (out, code) => {
                     panel.busy = false
                     if (code !== 0) { panel.message = "Could not move the window. It or the display may have disappeared."; return }
                     panel.message = "Window moved to " + panel.target + "."
                     panel.selectedWindow = null
-                    // Refresh on demand so the success message stays visible.
                 })
             }
             Component.onCompleted: refresh()
@@ -84,7 +75,10 @@ PluginComponent {
                             model: panel.outputs
                             DButton {
                                 text: (panel.target === modelData.name ? "✓ " : "") + modelData.name
-                                onClicked: panel.target = modelData.name
+                                onClicked: {
+                                    panel.target = modelData.name
+                                    pluginService.savePluginData("presentationHub", "presentationOutput", modelData.name)
+                                }
                             }
                         }
                     }
@@ -105,7 +99,7 @@ PluginComponent {
                             Column {
                                 anchors.fill: parent; anchors.margins: Theme.spacingS
                                 StyledText { width: parent.width; text: modelData.title || modelData.app_id || "Untitled window"; color: Theme.surfaceText; elide: Text.ElideRight }
-                                StyledText { width: parent.width; text: (modelData.app_id || "Unknown app") + " · " + panel.outputForWindow(modelData); color: Theme.surfaceVariantText; font.pixelSize: Theme.fontSizeSmall; elide: Text.ElideRight }
+                                StyledText { width: parent.width; text: (modelData.app_id || "Unknown app") + " · " + (modelData.output || "Unknown display"); color: Theme.surfaceVariantText; font.pixelSize: Theme.fontSizeSmall; elide: Text.ElideRight }
                             }
                             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: panel.selectedWindow = modelData.id }
                         }

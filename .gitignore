@@ -1,0 +1,4 @@
+/build/
+/presentation-hub/bin/
+__pycache__/
+*.py[cod]
