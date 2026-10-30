@@ -1,7 +1,7 @@
 {
   "id": "presentationHub",
   "name": "Presentation Hub",
-  "description": "Move a selected window to a selected display on Niri.",
+  "description": "Manage presentation windows and audience displays on Niri.",
   "version": "0.1.0",
   "author": "Presentation Hub contributors",
   "icon": "present_to_all",

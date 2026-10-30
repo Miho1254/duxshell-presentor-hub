@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #pragma once
 #include <QString>
 
@@ -5,7 +7,9 @@
 inline bool isPresentationCandidate(QString app, QString title) {
     app = app.toLower();
     title = title.toLower();
-    if (title.contains("presenter") || title.contains("người thuyết trình") || title.contains("speaker notes") || title.contains("presenter notes")) return false;
+    if (title.contains("presenter") || title.contains("người thuyết trình") ||
+        title.contains("speaker notes") || title.contains("presenter notes"))
+        return false;
     const bool impress = app.contains("impress") || app.contains("libreoffice");
     return impress && (title.contains("slide show") || title.contains("slideshow"));
 }

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
 set -eu
 core=${1:-./presentation-hub/bin/presentation-hub-core}
 "$core" snapshot | jq -e '.outputs | type == "array"' >/dev/null

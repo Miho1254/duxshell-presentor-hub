@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Integration checks against a disposable fake Niri IPC socket."""
 import json
 import os
@@ -8,18 +10,26 @@ import threading
 import unittest
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parents[1] / "presentation-hub/bin/presentation-hub-core"
+CORE = Path(
+    os.environ.get(
+        "PRESENTATION_HUB_CORE",
+        Path(__file__).resolve().parents[1] / "presentation-hub/bin/presentation-hub-core",
+    )
+)
 
 
 class FakeNiri:
-    def __init__(self, path, *, outputs=None, windows=None, move=True):
+    def __init__(self, path, *, outputs=None, windows=None, move=True, response=None):
         self.path = path
         self.outputs = outputs if outputs is not None else {
             "eDP-1": {"name": "eDP-1", "logical": {}},
             "HDMI-A-1": {"name": "HDMI-A-1", "logical": {}},
         }
-        self.windows = windows if windows is not None else [{"id": 42, "workspace_id": 1, "app_id": "firefox", "title": "Example"}]
+        self.windows = windows if windows is not None else [
+            {"id": 42, "workspace_id": 1, "app_id": "firefox", "title": "Example"}
+        ]
         self.move = move
+        self.response = response
         self.requests = []
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.bind(path)
@@ -53,9 +63,18 @@ class FakeNiri:
                 try:
                     req = json.loads(raw)
                     self.requests.append(req)
-                    if req == "Outputs": result = {"Outputs": self.outputs}
-                    elif req == "Workspaces": result = {"Workspaces": [{"id": 1, "output": "eDP-1"}, {"id": 2, "output": "HDMI-A-1"}]}
-                    elif req == "Windows": result = {"Windows": self.windows}
+                    if self.response is not None:
+                        conn.sendall(self.response)
+                        continue
+                    if req == "Outputs":
+                        result = {"Outputs": self.outputs}
+                    elif req == "Workspaces":
+                        result = {"Workspaces": [
+                            {"id": 1, "output": "eDP-1"},
+                            {"id": 2, "output": "HDMI-A-1"},
+                        ]}
+                    elif req == "Windows":
+                        result = {"Windows": self.windows}
                     elif isinstance(req, dict) and "Action" in req:
                         action = req["Action"]["MoveWindowToMonitor"]
                         if self.move:
@@ -78,17 +97,30 @@ class IpcTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def run_core(self, *args):
-        return subprocess.run([str(CORE), *args], env={**os.environ, "NIRI_SOCKET": self.socket}, text=True, capture_output=True, timeout=5)
+        return subprocess.run(
+            [str(CORE), *args],
+            env={**os.environ, "NIRI_SOCKET": self.socket},
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
 
     def test_move_confirms_result_and_uses_requested_id(self):
         with FakeNiri(self.socket) as fake:
             result = self.run_core("move", "--window", "42", "--output", "HDMI-A-1")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), {"window_id": 42, "output": "HDMI-A-1"})
-            self.assertIn({"Action": {"MoveWindowToMonitor": {"id": 42, "output": "HDMI-A-1"}}}, fake.requests)
+            self.assertEqual(
+                json.loads(result.stdout), {"window_id": 42, "output": "HDMI-A-1"}
+            )
+            self.assertIn(
+                {"Action": {"MoveWindowToMonitor": {"id": 42, "output": "HDMI-A-1"}}},
+                fake.requests,
+            )
 
     def test_disconnected_display_does_not_send_move(self):
-        with FakeNiri(self.socket, outputs={"eDP-1": {"name": "eDP-1", "logical": {}}}) as fake:
+        with FakeNiri(
+            self.socket, outputs={"eDP-1": {"name": "eDP-1", "logical": {}}}
+        ) as fake:
             result = self.run_core("move", "--window", "42", "--output", "HDMI-A-1")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("destination display", result.stderr)
@@ -101,11 +133,26 @@ class IpcTests(unittest.TestCase):
             self.assertIn("window no longer exists", result.stderr)
             self.assertFalse(any(isinstance(r, dict) and "Action" in r for r in fake.requests))
 
+    def test_invalid_json_is_rejected(self):
+        with FakeNiri(self.socket, response=b"not-json\n"):
+            result = self.run_core("snapshot")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Invalid JSON", result.stderr)
+
+    def test_oversized_reply_is_rejected(self):
+        # The core must limit memory use even when an IPC peer misbehaves.
+        response = b"x" * (16 * 1024 * 1024 + 1) + b"\n"
+        with FakeNiri(self.socket, response=response):
+            result = self.run_core("snapshot")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("response is too large", result.stderr)
+
     def test_noop_action_does_not_report_success(self):
         with FakeNiri(self.socket, move=False):
             result = self.run_core("move", "--window", "42", "--output", "HDMI-A-1")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Could not confirm", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
