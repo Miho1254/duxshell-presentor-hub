@@ -21,27 +21,41 @@ A DMS plugin for presenting on an external display in Niri. Choose a window or d
 - `wl-mirror` on the DMS session's `PATH` **only for Duplicate**. The plugin neither bundles nor installs it; install and update it with your system package manager. For Arch Linux and CachyOS: `sudo pacman -S wl-mirror`.
 - `jq` for the live smoke test. Python 3 is needed only for integration tests.
 
-## Installation
+## Install without the DMS Store
 
-Clone this repository and build on the target machine:
+Presentation Hub is not yet available in the DMS Store. You can install it manually with the installer below; no source editing is needed. There is **no prebuilt release yet**, so the installer builds the C++ core on your machine and requires a compiler, CMake and Qt 6 development files. The installed plugin is a separate copy; you do not need to keep the downloaded repository to use it.
+
+### Arch Linux / CachyOS
+
+Install the build prerequisites (DMS and Niri must already be installed):
+
+```sh
+sudo pacman -S --needed git cmake base-devel qt6-base
+```
+
+Download and install:
 
 ```sh
 git clone https://github.com/Miho1254/duxshell-presentor-hub.git
 cd duxshell-presentor-hub
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+./scripts/install.sh
 ```
 
-The build places `presentation-hub-core` in `presentation-hub/bin/`. This binary is generated locally and is not tracked by Git. It requires compatible Qt runtime libraries.
+On other distributions, install Git, CMake 3.20+, a C++17 compiler and Qt 6 Core/Network development packages through your package manager, then use the same download and install commands. The installer itself runs as your normal user; it does not install packages or use `sudo`.
 
-Link the plugin directory, then enable it under **DMS Settings → Plugins** and add Presentation Hub to the bar:
+Next, open **DMS Settings → Plugins**, scan for plugins if needed, enable **Presentation Hub**, and add its widget to the bar. The installer uses `${XDG_CONFIG_HOME:-$HOME/.config}/dms/plugins/presentation-hub`. It refuses to overwrite an existing installation, including a development symlink or another plugin directory with the same ID.
+
+**Duplicate is optional.** To enable it on Arch Linux or CachyOS, install the system-managed dependency:
 
 ```sh
-mkdir -p "$HOME/.config/dms/plugins"
-ln -s "$PWD/presentation-hub" "$HOME/.config/dms/plugins/presentation-hub"
+sudo pacman -S wl-mirror
 ```
 
-If the destination already exists, inspect it before replacing it. After source changes, rebuild the core when needed and reload the plugin through DMS. Reloading ends any active presentation session and plugin-owned mirror.
+Other features work without `wl-mirror`. The plugin checks for it on the DMS session's `PATH` and does not bundle or install it.
+
+### Updating and uninstalling
+
+There is no Store-based updater yet. The installer does not replace an existing copy or symlink. Before updating or uninstalling, disable the plugin, end any presentation session, and inspect the existing directory; remove or move it only if you intend to replace or uninstall it. Then use the installer again with the desired version for an update. This preserves existing installations instead of silently overwriting user files.
 
 ## Using the widget
 
@@ -89,7 +103,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -
 sh tests/smoke.sh
 ```
 
-The smoke test requires a running Niri session. The Python integration suite uses a disposable fake Niri socket. Set `PRESENTATION_HUB_CORE` to test an alternative core binary, such as a sanitizer build. The standalone core lives in `core/`; the composite plugin lives in `presentation-hub/`. See [interface research](docs/UI_RESEARCH.md) for design references and the [resource audit](docs/PERFORMANCE.md) for measurements and their limits.
+The smoke test requires a running Niri session. The Python integration suite uses a disposable fake Niri socket, and the installer tests use a temporary XDG config directory. Set `PRESENTATION_HUB_CORE` to test an alternative core binary, such as a sanitizer build. The standalone core lives in `core/`; the composite plugin lives in `presentation-hub/`. See [interface research](docs/UI_RESEARCH.md) for design references and the [resource audit](docs/PERFORMANCE.md) for measurements and their limits.
 
 Please include the DMS, Niri and Quickshell versions, relevant logs, and steps to reproduce when reporting an issue. Avoid including private window titles, images or other sensitive data in logs.
 
