@@ -24,6 +24,47 @@ PluginComponent {
     property var fullscreenStarted: ({})
     property var readyFullscreenIds: []
     property bool moving: false
+    property string mirrorSource: ""
+    property string mirrorTarget: ""
+    property bool mirrorStopping: false
+    property string mirrorStopMessage: ""
+    property bool mirrorActive: false
+    property bool mirrorDependencyChecking: false
+
+    function checkMirrorDependency(showNotice) {
+        if (mirrorDependencyChecking) return
+        mirrorDependencyChecking = true
+        PluginService.setGlobalVar("presentationHub", "mirrorDependency", "checking")
+        Proc.runCommand("presentationHub.mirrorDependency", ["sh", "-c", "command -v wl-mirror >/dev/null 2>&1"], (out, code) => {
+            root.mirrorDependencyChecking = false
+            const state = code === 0 ? "available" : "missing"
+            PluginService.setGlobalVar("presentationHub", "mirrorDependency", state)
+            if (showNotice && state === "missing")
+                ToastService.showInfo("Duplicate needs wl-mirror", "Install wl-mirror to enable Duplicate. Window moving is still available.")
+        })
+    }
+
+    function publishMirror(state, message) {
+        mirrorActive = state === "starting" || state === "running" || state === "stopping"
+        if (mirrorActive) {
+            // Do not surface queued suggestions during or just after duplication.
+            pendingWindows = []
+            for (const window of knownWindows) {
+                if ((window.presentation_candidate || fullscreenIds.includes(window.id)) && !suggestedIds.includes(window.id))
+                    suggestedIds = suggestedIds.concat([window.id])
+            }
+            if (windowPrompt.shouldBeVisible && !moving) windowPrompt.close()
+        }
+        PluginService.setGlobalVar("presentationHub", "mirror", { state: state, source: mirrorSource, target: mirrorTarget, message: message || "" })
+    }
+
+    function stopMirror(reason) {
+        if (!mirrorProcess.running) return
+        mirrorStopping = true
+        mirrorStopMessage = reason || "Mirror stopped."
+        publishMirror("stopping", "Stopping mirror…")
+        mirrorProcess.running = false
+    }
 
     function askForOutput(name) {
         if (displayPrompt.shouldBeVisible && displayPrompt.outputName === name) return
@@ -42,6 +83,7 @@ PluginComponent {
                 return
             }
         }
+        if (mirrorActive) return
         const target = PluginService.loadPluginData("presentationHub", "presentationOutput", "")
         while (pendingWindows.length > 0) {
             const candidate = pendingWindows[0]
@@ -100,6 +142,8 @@ PluginComponent {
                 const outputs = state.outputs.map(o => o.name)
                 const previous = root.knownOutputs
                 root.knownOutputs = outputs
+                if (mirrorProcess.running && (!outputs.includes(root.mirrorSource) || !outputs.includes(root.mirrorTarget)))
+                    root.stopMirror("Display disconnected; mirror stopped.")
                 root.knownWindows = state.windows
                 root.fullscreenIds = root.fullscreenBrowserIds(state.windows)
                 const now = Date.now()
@@ -114,6 +158,12 @@ PluginComponent {
                 if (waiting && !fullscreenSettle.running) fullscreenSettle.start()
                 const ids = state.windows.map(w => w.id)
                 root.suggestedIds = root.suggestedIds.filter(id => state.windows.some(w => w.id === id && (w.presentation_candidate || root.fullscreenIds.includes(id))))
+                if (root.mirrorActive) {
+                    for (const window of state.windows) {
+                        if ((window.presentation_candidate || root.fullscreenIds.includes(window.id)) && !root.suggestedIds.includes(window.id))
+                            root.suggestedIds = root.suggestedIds.concat([window.id])
+                    }
+                }
                 if (root.initialized) {
                     for (const name of outputs) {
                         if (!previous.includes(name) && root.isExternal(name)) {
@@ -121,7 +171,7 @@ PluginComponent {
                         }
                     }
                     const target = PluginService.loadPluginData("presentationHub", "presentationOutput", "")
-                    if (target && outputs.includes(target)) {
+                    if (!root.mirrorActive && target && outputs.includes(target)) {
                         for (const window of state.windows) {
                             if ((window.presentation_candidate || root.readyFullscreenIds.includes(window.id)) && window.output && window.output !== target && !root.suggestedIds.includes(window.id)) {
                                 root.suggestedIds = root.suggestedIds.concat([window.id])
@@ -156,17 +206,54 @@ PluginComponent {
         function onFullscreenChanged() { fullscreenDebounce.restart() }
         function onTitleChanged() { fullscreenDebounce.restart() }
     }
-    Component.onCompleted: refreshOutputs()
+    Component.onCompleted: { publishMirror("idle", ""); refreshOutputs(); checkMirrorDependency(true) }
+
+    Process {
+        id: mirrorProcess
+        // Arguments are passed separately: output names cannot become shell code.
+        command: ["sh", "-c", "exec wl-mirror --fullscreen-output \"$2\" \"$1\"", "presentation-hub", root.mirrorSource, root.mirrorTarget]
+        stderr: StdioCollector { id: mirrorError }
+        onStarted: root.publishMirror("running", "Mirror process running")
+        onExited: (exitCode) => {
+            const wasStopped = root.mirrorStopping
+            root.mirrorStopping = false
+            if (wasStopped) root.publishMirror("idle", root.mirrorStopMessage)
+            else {
+                root.publishMirror("error", exitCode === 127 ? "wl-mirror is not installed. Install it and try again." : "Mirror stopped unexpectedly (exit " + exitCode + "). Check wl-mirror and display availability.")
+                if (exitCode === 127) root.checkMirrorDependency(false)
+            }
+        }
+    }
 
     IpcHandler {
         target: "presentationHub"
         function status(): string {
-            return JSON.stringify({ ready: root.initialized, outputs: root.knownOutputs, checks: root.checks, lastError: root.lastError, windowPromptVisible: windowPrompt.shouldBeVisible, promptedWindowId: windowPrompt.shouldBeVisible ? windowPrompt.windowId : null })
+            return JSON.stringify({ ready: root.initialized, outputs: root.knownOutputs, checks: root.checks, lastError: root.lastError, fullscreenIds: root.fullscreenIds, suggestedIds: root.suggestedIds, windowPromptVisible: windowPrompt.shouldBeVisible, promptedWindowId: windowPrompt.shouldBeVisible ? windowPrompt.windowId : null, mirror: PluginService.getGlobalVar("presentationHub", "mirror", { state: "idle" }), mirrorDependency: PluginService.getGlobalVar("presentationHub", "mirrorDependency", "checking") })
         }
         function testPrompt(output: string): string {
             if (!root.knownOutputs.includes(output)) return "Display not connected"
             root.askForOutput(output)
             return "Prompt requested"
+        }
+        function startMirror(source: string, target: string): string {
+            if (mirrorProcess.running || root.mirrorStopping) return "Mirror already running or stopping"
+            if (!source || !target || source === target) return "Select two different displays"
+            if (!root.knownOutputs.includes(source) || !root.knownOutputs.includes(target)) return "Display not connected; refresh and try again"
+            root.mirrorSource = source
+            root.mirrorTarget = target
+            root.mirrorStopping = false
+            root.publishMirror("starting", "Starting mirror…")
+            mirrorProcess.running = true
+            return "Starting mirror"
+        }
+        function checkMirror(): string {
+            root.checkMirrorDependency(false)
+            return "Checking wl-mirror"
+        }
+        function stopMirror(): string {
+            if (!mirrorProcess.running) return "No active mirror"
+            root.stopMirror("")
+            return "Stopping mirror"
         }
     }
 

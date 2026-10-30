@@ -8,6 +8,7 @@ A Niri-first tool for moving windows to an external display. The core is a C++/Q
 - Qt 6 Core and Network at runtime
 - CMake 3.20+, a C++17 compiler and Qt 6 development packages to build
 - DMS 2.0 or newer for the widget
+- `wl-mirror` for Duplicate mode (optional for window moving)
 
 ## Build
 
@@ -32,6 +33,10 @@ presentation-hub/bin/presentation-hub-core move --window 42 --output HDMI-A-1
 ## DMS widget
 
 After building, link `presentation-hub` into `~/.config/dms/plugins/`, enable Presentation Hub in DMS Settings → Plugins, and add its widget to the bar. Choose a destination and window, then select **Move window**. Refresh after connecting or disconnecting a display.
+
+In **Duplicate**, choose a source and a different destination, then start mirroring. The plugin checks for the system-managed `wl-mirror` on the DMS session's PATH at startup and when Duplicate is opened. If it is missing, Duplicate shows installation guidance and a recheck button; window moving and the other plugin features still work. On Arch Linux and CachyOS, install it with `sudo pacman -S wl-mirror`; on other distributions, use the distribution's package manager. The plugin never installs or bundles `wl-mirror`, so updates remain under the system package manager's control.
+
+The plugin owns one `wl-mirror` process and stops it when requested or when either active display disappears. Window-move suggestions are suppressed while mirroring, and fullscreen windows encountered during that session are not suggested afterward until they exit and re-enter fullscreen. Process-running status does not guarantee capture succeeded visually. Niri uses a fullscreen mirror window rather than native cloned outputs; resolution and aspect ratio may differ, and the source display's notifications and notes are visible to the audience.
 
 The background component checks active outputs approximately every three seconds. When an external output appears after the initial scan, a DMS dialog asks whether to use it for presentations, including when Do Not Disturb is enabled. Choosing **Use for presentations** remembers the output name; **Not now** makes no change. The widget selects the remembered output when it is available, and selecting a different output in the widget updates that preference. The prompt does not move windows or change display configuration. At startup, displays already connected are treated as the baseline and do not trigger a prompt. A disconnect shorter than the polling interval may be missed. Internal display detection uses connector-name prefixes and may not recognize every device.
 
