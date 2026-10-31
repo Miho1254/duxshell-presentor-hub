@@ -7,16 +7,12 @@ import Quickshell.Wayland
 import qs.Common
 import qs.DCommon.Widgets
 import qs.Modals.Common
-import qs.Services
 import qs.Modules.Plugins
+import qs.Services
 
 PluginComponent {
     id: root
 
-    readonly property string corePath: decodeURIComponent(Qt.resolvedUrl("bin/presentation-hub-core").toString().replace(/^file:\/\//, ""))
-    readonly property string buildScript: decodeURIComponent(Qt.resolvedUrl("build-core.sh").toString().replace(/^file:\/\//, ""))
-    property string coreState: "checking"
-    property bool buildingCore: false
     property var knownOutputs: []
     property bool initialized: false
     property bool checking: false
@@ -57,6 +53,43 @@ PluginComponent {
     readonly property var identifyScreen: Quickshell.screens.find((screen) => {
         return screen.name === identifyOutput;
     }) || null
+
+    function candidate(appId, title) {
+        const app = String(appId || '').toLowerCase();
+        const text = String(title || '').toLowerCase();
+        if (['presenter', 'người thuyết trình', 'speaker notes', 'presenter notes'].some((x) => {
+            return text.includes(x);
+        }))
+            return false;
+
+        return (app.includes('impress') || app.includes('libreoffice')) && (text.includes('slide show') || text.includes('slideshow'));
+    }
+
+    function niriSnapshot(service) {
+        const outputs = Quickshell.screens.map((screen) => {
+            return Object.assign({
+            }, (service.outputs || {
+            })[screen.name] || {
+            }, {
+                "name": screen.name
+            });
+        }).sort((a, b) => {
+            return a.name.localeCompare(b.name);
+        });
+        const workspaces = service.workspaces || {
+        };
+        const windows = (service.windows || []).map((w) => {
+            return Object.assign({
+            }, w, {
+                "output": workspaces[w.workspace_id] ? workspaces[w.workspace_id].output : null,
+                "presentation_candidate": candidate(w.app_id, w.title)
+            });
+        });
+        return {
+            "outputs": outputs,
+            "windows": windows
+        };
+    }
 
     function publishSession() {
         PluginService.setGlobalVar("presentationHub", "session", {
@@ -138,39 +171,9 @@ PluginComponent {
         return filter === "only" ? list.includes(app) : filter === "exclude" ? !list.includes(app) : true;
     }
 
-    function publishCore(state, message) {
-        coreState = state;
-        PluginService.setGlobalVar("presentationHub", "core", { state: state, message: message || "" });
-    }
-
-    // Store installs do not build binaries. Never run a build until requested.
-    function checkCore() {
-        if (buildingCore) return;
-        publishCore("checking", "Checking the core…");
-        Proc.runCommand("presentationHub.coreCheck", ["sh", "-c", "test -x \"$1\"", "presentation-hub", corePath], (out, code) => {
-            if (code === 0) {
-                root.publishCore("ready", "");
-                root.refreshOutputs();
-            } else {
-                root.publishCore("missing", "Build the core to use Presentation Hub. This needs CMake, a C++17 compiler and Qt 6 development files.");
-            }
-        });
-    }
-
-    function buildCore() {
-        if (buildingCore) return;
-        buildingCore = true;
-        publishCore("building", "Building the core on this computer…");
-        Proc.runCommand("presentationHub.buildCore", ["sh", buildScript], (out, code) => {
-            root.buildingCore = false;
-            if (code === 0) root.checkCore();
-            else root.publishCore("error", "Build failed. Check CMake, your C++ compiler and Qt 6 development files, then try again. If the source is missing, reinstall from the repository.");
-        }, 0, Proc.noTimeout);
-    }
-
     function checkMirrorDependency(showNotice) {
         if (mirrorDependencyChecking)
-            return;
+            return ;
 
         mirrorDependencyChecking = true;
         PluginService.setGlobalVar("presentationHub", "mirrorDependency", "checking");
@@ -208,7 +211,7 @@ PluginComponent {
 
     function stopMirror(reason) {
         if (!mirrorProcess.running)
-            return;
+            return ;
 
         mirrorStopping = true;
         mirrorStopMessage = reason || "Mirror stopped.";
@@ -218,7 +221,7 @@ PluginComponent {
 
     function askForOutput(name) {
         if (displayPrompt.shouldBeVisible && displayPrompt.outputName === name)
-            return;
+            return ;
 
         if (!pendingOutputs.includes(name))
             pendingOutputs = pendingOutputs.concat([name]);
@@ -228,7 +231,7 @@ PluginComponent {
 
     function nextPrompt() {
         if (displayPrompt.shouldBeVisible || windowPrompt.shouldBeVisible)
-            return;
+            return ;
 
         while (pendingOutputs.length > 0) {
             const name = pendingOutputs[0];
@@ -236,16 +239,16 @@ PluginComponent {
             if (knownOutputs.includes(name)) {
                 displayPrompt.outputName = name;
                 displayPrompt.open();
-                return;
+                return ;
             }
         }
         if (mirrorActive)
-            return;
+            return ;
 
         const target = PluginService.loadPluginData("presentationHub", "presentationOutput", "");
         if (suggestionMode() === "manual") {
             pendingWindows = [];
-            return;
+            return ;
         }
         while (pendingWindows.length > 0) {
             const candidate = pendingWindows[0];
@@ -262,7 +265,7 @@ PluginComponent {
                 windowPrompt.isFullscreenBrowser = fullscreenIds.includes(current.id);
                 windowPrompt.errorMessage = "";
                 windowPrompt.open();
-                return;
+                return ;
             }
         }
     }
@@ -309,125 +312,123 @@ PluginComponent {
         return result;
     }
 
-    // Proc uses a stable ID, and `checking` prevents overlapping polls.
-    // This keeps the 3-second watchdog bounded when Niri is slow to reply.
     function refreshOutputs() {
-        if (checking || coreState !== "ready")
-            return;
+        if (!initialized && (!Quickshell.screens.length || !Object.keys(NiriService.workspaces || {
+        }).length))
+            return ;
 
-        checking = true;
-        Proc.runCommand("presentationHub.watchOutputs", [corePath, "snapshot"], (out, code) => {
-            root.checking = false;
+        try {
+            const state = root.niriSnapshot(NiriService);
             root.checks++;
-            if (code !== 0) {
-                root.lastError = "Core snapshot failed: " + code;
-                return;
+            const outputs = state.outputs.map((o) => {
+                return o.name;
+            });
+            const previous = root.knownOutputs;
+            root.knownOutputs = outputs;
+            if (root.sessionOutput && !outputs.includes(root.sessionOutput))
+                root.endSession();
+
+            if (root.coverOutput && !outputs.includes(root.coverOutput))
+                root.hideCover();
+
+            if (root.identifyOutput && !outputs.includes(root.identifyOutput))
+                root.identifyOutput = "";
+
+            if (mirrorProcess.running && (!outputs.includes(root.mirrorSource) || !outputs.includes(root.mirrorTarget)))
+                root.stopMirror("Display disconnected; mirror stopped.");
+
+            root.knownWindows = state.windows;
+            root.fullscreenIds = root.fullscreenBrowserIds(state.windows);
+            const now = Date.now();
+            const starts = {
+            };
+            let waiting = false;
+            for (const id of root.fullscreenIds) {
+                starts[id] = root.fullscreenStarted[id] || now;
+                if (now - starts[id] < 450)
+                    waiting = true;
+
             }
-            root.lastError = "";
-            try {
-                const state = JSON.parse(out);
-                const outputs = state.outputs.map((o) => {
-                    return o.name;
+            root.fullscreenStarted = starts;
+            root.readyFullscreenIds = root.fullscreenIds.filter((id) => {
+                return now - starts[id] >= 450;
+            });
+            if (waiting && !fullscreenSettle.running)
+                fullscreenSettle.start();
+
+            const ids = state.windows.map((w) => {
+                return w.id;
+            });
+            // Prompts can remain open while windows/displays disappear.
+            // Drop stale queue entries on every snapshot to bound their lifetime.
+            root.pendingOutputs = root.pendingOutputs.filter((name) => {
+                return outputs.includes(name);
+            });
+            root.pendingWindows = root.pendingWindows.filter((candidate) => {
+                return ids.includes(candidate.id);
+            });
+            root.suggestedIds = root.suggestedIds.filter((id) => {
+                return state.windows.some((w) => {
+                    return w.id === id && (w.presentation_candidate || root.fullscreenIds.includes(id));
                 });
-                const previous = root.knownOutputs;
-                root.knownOutputs = outputs;
-                if (root.sessionOutput && !outputs.includes(root.sessionOutput))
-                    root.endSession();
-
-                if (root.coverOutput && !outputs.includes(root.coverOutput))
-                    root.hideCover();
-
-                if (root.identifyOutput && !outputs.includes(root.identifyOutput))
-                    root.identifyOutput = "";
-
-                if (mirrorProcess.running && (!outputs.includes(root.mirrorSource) || !outputs.includes(root.mirrorTarget)))
-                    root.stopMirror("Display disconnected; mirror stopped.");
-
-                root.knownWindows = state.windows;
-                root.fullscreenIds = root.fullscreenBrowserIds(state.windows);
-                const now = Date.now();
-                const starts = {
-                };
-                let waiting = false;
-                for (const id of root.fullscreenIds) {
-                    starts[id] = root.fullscreenStarted[id] || now;
-                    if (now - starts[id] < 450)
-                        waiting = true;
+            });
+            if (root.mirrorActive) {
+                for (const window of state.windows) {
+                    if ((window.presentation_candidate || root.fullscreenIds.includes(window.id)) && !root.suggestedIds.includes(window.id))
+                        root.suggestedIds = root.suggestedIds.concat([window.id]);
 
                 }
-                root.fullscreenStarted = starts;
-                root.readyFullscreenIds = root.fullscreenIds.filter((id) => {
-                    return now - starts[id] >= 450;
-                });
-                if (waiting && !fullscreenSettle.running)
-                    fullscreenSettle.start();
+            }
+            if (root.initialized) {
+                for (const name of outputs) {
+                    if (!previous.includes(name) && root.isExternal(name))
+                        root.askForOutput(name);
 
-                const ids = state.windows.map((w) => {
-                    return w.id;
-                });
-                // Prompts can remain open while windows/displays disappear.
-                // Drop stale queue entries on every snapshot to bound their lifetime.
-                root.pendingOutputs = root.pendingOutputs.filter(name => outputs.includes(name));
-                root.pendingWindows = root.pendingWindows.filter(candidate => ids.includes(candidate.id));
-                root.suggestedIds = root.suggestedIds.filter((id) => {
-                    return state.windows.some((w) => {
-                        return w.id === id && (w.presentation_candidate || root.fullscreenIds.includes(id));
-                    });
-                });
-                if (root.mirrorActive) {
+                }
+                const target = PluginService.loadPluginData("presentationHub", "presentationOutput", "");
+                const suggestMode = root.suggestionMode();
+                const suggestFullscreen = suggestMode === "always" || (suggestMode === "session" && root.sessionOutput !== "");
+                if (!root.mirrorActive && target && outputs.includes(target)) {
                     for (const window of state.windows) {
-                        if ((window.presentation_candidate || root.fullscreenIds.includes(window.id)) && !root.suggestedIds.includes(window.id))
+                        if (((suggestMode !== "manual" && window.presentation_candidate) || (suggestFullscreen && root.readyFullscreenIds.includes(window.id))) && window.output && window.output !== target && !root.suggestedIds.includes(window.id)) {
                             root.suggestedIds = root.suggestedIds.concat([window.id]);
+                            if (!root.pendingWindows.some((candidate) => {
+                                return candidate.id === window.id;
+                            }))
+                                root.pendingWindows = root.pendingWindows.concat([{
+                                    "id": window.id
+                                }]);
 
-                    }
-                }
-                if (root.initialized) {
-                    for (const name of outputs) {
-                        if (!previous.includes(name) && root.isExternal(name))
-                            root.askForOutput(name);
-
-                    }
-                    const target = PluginService.loadPluginData("presentationHub", "presentationOutput", "");
-                    const suggestMode = root.suggestionMode();
-                    const suggestFullscreen = suggestMode === "always" || (suggestMode === "session" && root.sessionOutput !== "");
-                    if (!root.mirrorActive && target && outputs.includes(target)) {
-                        for (const window of state.windows) {
-                            if (((suggestMode !== "manual" && window.presentation_candidate) || (suggestFullscreen && root.readyFullscreenIds.includes(window.id))) && window.output && window.output !== target && !root.suggestedIds.includes(window.id)) {
-                                root.suggestedIds = root.suggestedIds.concat([window.id]);
-                                if (!root.pendingWindows.some(candidate => candidate.id === window.id)) {
-                                    root.pendingWindows = root.pendingWindows.concat([{ "id": window.id }]);
-                                }
-                            }
                         }
                     }
-                } else {
-                    root.suggestedIds = state.windows.filter((w) => {
-                        return w.presentation_candidate || root.fullscreenIds.includes(w.id);
-                    }).map((w) => {
-                        return w.id;
-                    });
                 }
-                if (root.initialized && JSON.stringify(previous) !== JSON.stringify(outputs))
-                    console.info("Presentation Hub: outputs changed", JSON.stringify(outputs));
-
-                if (displayPrompt.shouldBeVisible && !outputs.includes(displayPrompt.outputName))
-                    displayPrompt.close();
-
-                if (windowPrompt.shouldBeVisible && (!outputs.includes(windowPrompt.targetOutput) || !ids.includes(windowPrompt.windowId) || (windowPrompt.isFullscreenBrowser && !root.fullscreenIds.includes(windowPrompt.windowId))))
-                    windowPrompt.close();
-
-                root.initialized = true;
-                root.nextPrompt();
-            } catch (e) {
-                console.warn("Presentation Hub: invalid display snapshot", e);
+            } else {
+                root.suggestedIds = state.windows.filter((w) => {
+                    return w.presentation_candidate || root.fullscreenIds.includes(w.id);
+                }).map((w) => {
+                    return w.id;
+                });
             }
-        });
+            if (root.initialized && JSON.stringify(previous) !== JSON.stringify(outputs))
+                console.info("Presentation Hub: outputs changed", JSON.stringify(outputs));
+
+            if (displayPrompt.shouldBeVisible && !outputs.includes(displayPrompt.outputName))
+                displayPrompt.close();
+
+            if (windowPrompt.shouldBeVisible && (!outputs.includes(windowPrompt.targetOutput) || !ids.includes(windowPrompt.windowId) || (windowPrompt.isFullscreenBrowser && !root.fullscreenIds.includes(windowPrompt.windowId))))
+                windowPrompt.close();
+
+            root.initialized = true;
+            root.nextPrompt();
+        } catch (e) {
+            console.warn("Presentation Hub: invalid Niri state", e);
+        }
     }
 
     Component.onDestruction: {
-        if (sessionOutput || sessionStarting) {
+        if (sessionOutput || sessionStarting)
             endSession();
-        }
+
     }
     Component.onCompleted: {
         if (!PluginService.loadPluginData("presentationHub", "suggestionMode", "") && PluginService.loadPluginData("presentationHub", "suggestFullscreen", "yes") === "no")
@@ -436,7 +437,7 @@ PluginComponent {
         publishMirror("idle", "");
         publishCover();
         publishSession();
-        checkCore();
+        refreshOutputs();
         checkMirrorDependency(true);
     }
 
@@ -456,11 +457,32 @@ PluginComponent {
         target: SessionData
     }
 
-    Timer {
-        interval: 3000
-        running: true
-        repeat: true
-        onTriggered: root.refreshOutputs()
+    MoveController {
+        id: mover
+    }
+
+    Connections {
+        function onScreensChanged() {
+            fullscreenDebounce.restart();
+        }
+
+        target: Quickshell
+    }
+
+    Connections {
+        function onOutputsChanged() {
+            fullscreenDebounce.restart();
+        }
+
+        function onWorkspacesChanged() {
+            fullscreenDebounce.restart();
+        }
+
+        function onWindowsChanged() {
+            fullscreenDebounce.restart();
+        }
+
+        target: NiriService
     }
 
     Timer {
@@ -521,7 +543,6 @@ PluginComponent {
 
             }
         }
-
     }
 
     PanelWindow {
@@ -598,17 +619,17 @@ PluginComponent {
         Rectangle {
             anchors.centerIn: parent
             width: Math.min(parent.width - 40, identifyLabel.implicitWidth + 80)
-            height: 110
-            radius: 16
-            color: "#eb111318"
+            height: Theme.fontSizeDisplay + Theme.spacingXL * 3
+            radius: Theme.cornerRadiusL
+            color: Theme.surface
 
-            Text {
+            StyledText {
                 id: identifyLabel
 
                 anchors.centerIn: parent
                 text: root.identifyOutput
-                color: "white"
-                font.pixelSize: 36
+                color: Theme.surfaceText
+                font.pixelSize: Theme.fontSizeDisplay
                 font.bold: true
             }
 
@@ -632,7 +653,6 @@ PluginComponent {
                 "cover": PluginService.getGlobalVar("presentationHub", "cover", {
                     "active": false
                 }),
-                "core": PluginService.getGlobalVar("presentationHub", "core", { state: "checking" }),
                 "ready": root.initialized,
                 "outputs": root.knownOutputs,
                 "checks": root.checks,
@@ -646,12 +666,6 @@ PluginComponent {
                 }),
                 "mirrorDependency": PluginService.getGlobalVar("presentationHub", "mirrorDependency", "checking")
             });
-        }
-
-        function buildCore() : string {
-            if (root.buildingCore) return "Build already running";
-            root.buildCore();
-            return "Building core";
         }
 
         function startPresentation(output: string, mode: string, source: string, windowId: string, dnd: string) : string {
@@ -699,15 +713,15 @@ PluginComponent {
             // A delayed IPC reply must not resurrect a session that already ended.
             const generation = ++root.sessionGeneration;
             root.publishSession();
-            Proc.runCommand("presentationHub.sessionMove", [root.corePath, "move", "--window", String(id), "--output", output], (out, code) => {
+            mover.move(id, output, (success) => {
                 if (generation !== root.sessionGeneration)
-                    return;
+                    return ;
 
-                if (code !== 0 || !root.knownOutputs.includes(output)) {
+                if (!success || !root.knownOutputs.includes(output)) {
                     root.sessionStarting = false;
                     root.publishSession();
                     ToastService.showInfo("Presentation not started", "Could not move the selected window. Check the window and display.");
-                    return;
+                    return ;
                 }
                 if (window.output !== output)
                     PluginService.setGlobalVar("presentationHub", "lastMoved", {
@@ -818,9 +832,9 @@ PluginComponent {
             return close();
         }
         onShouldBeVisibleChanged: {
-            if (!shouldBeVisible) {
+            if (!shouldBeVisible)
                 Qt.callLater(root.nextPrompt);
-            }
+
         }
 
         content: Component {
@@ -895,9 +909,9 @@ PluginComponent {
 
         }
         onShouldBeVisibleChanged: {
-            if (!shouldBeVisible) {
+            if (!shouldBeVisible)
                 Qt.callLater(root.nextPrompt);
-            }
+
         }
 
         content: Component {
@@ -961,9 +975,9 @@ PluginComponent {
                                     return w.id === id;
                                 });
                                 const origin = original ? original.output : "";
-                                Proc.runCommand("presentationHub.suggestedMove", [root.corePath, "move", "--window", String(id), "--output", output], (out, code) => {
+                                mover.move(id, output, (success) => {
                                     root.moving = false;
-                                    if (code === 0) {
+                                    if (success) {
                                         if (origin && origin !== output)
                                             PluginService.setGlobalVar("presentationHub", "lastMoved", {
                                             "id": id,
@@ -986,6 +1000,91 @@ PluginComponent {
 
             }
 
+        }
+
+    }
+
+    component MoveController: QtObject {
+        id: moveRoot
+
+        property var pending: []
+        property Timer verification
+
+        verification: Timer {
+            interval: 80
+            repeat: true
+            onTriggered: {
+                const state = moveRoot.snapshot();
+                const remaining = [];
+                for (const request of moveRoot.pending) {
+                    const window = state.windows.find((w) => {
+                        return w.id === request.id;
+                    });
+                    if (window && window.output === request.output)
+                        request.callback(true);
+                    else if (!window || !state.outputs.some((o) => {
+                        return o.name === request.output;
+                    }) || Date.now() >= request.deadline)
+                        request.callback(false);
+                    else
+                        remaining.push(request);
+                }
+                moveRoot.pending = remaining;
+                if (!remaining.length)
+                    stop();
+
+            }
+        }
+
+        function snapshot() {
+            const outputs = Quickshell.screens.map((screen) => {
+                return ({
+                    "name": screen.name
+                });
+            });
+            const workspaces = NiriService.workspaces || {
+            };
+            const windows = (NiriService.windows || []).map((w) => {
+                return ({
+                    "id": w.id,
+                    "output": workspaces[w.workspace_id] ? workspaces[w.workspace_id].output : null
+                });
+            });
+            return {
+                "outputs": outputs,
+                "windows": windows
+            };
+        }
+
+        // NiriService.send reports socket availability, not whether the move applied.
+        function move(id, output, callback) {
+            const state = moveRoot.snapshot();
+            if (!state.outputs.some((o) => {
+                return o.name === output;
+            }) || !state.windows.some((w) => {
+                return w.id === id;
+            })) {
+                callback(false);
+                return ;
+            }
+            if (!NiriService.send({
+                "Action": {
+                    "MoveWindowToMonitor": {
+                        "id": id,
+                        "output": output
+                    }
+                }
+            })) {
+                callback(false);
+                return ;
+            }
+            pending = pending.concat([{
+                "id": id,
+                "output": output,
+                "deadline": Date.now() + 2000,
+                "callback": callback
+            }]);
+            verification.restart();
         }
 
     }

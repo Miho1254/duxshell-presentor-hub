@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
-# Build and install a standalone copy of the plugin without changing an existing install.
+# Install a standalone copy of the plugin without changing an existing install.
 set -eu
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -8,7 +8,7 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
-for command in cmake mktemp grep; do
+for command in mktemp grep; do
     if ! command -v "$command" >/dev/null 2>&1; then
         printf 'Missing required command: %s\n' "$command" >&2
         exit 1
@@ -39,29 +39,18 @@ for manifest in "$plugins_dir"/*/plugin.json; do
     fi
 done
 
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/presentation-hub-install.XXXXXXXX")
 staging_dir=
 cleanup() {
     if [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
         rm -rf -- "$staging_dir"
     fi
-    rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-mkdir -p "$work_dir/source/core" "$work_dir/source/presentation-hub"
-cp "$project_dir/CMakeLists.txt" "$work_dir/source/"
-cp "$project_dir/core/main.cpp" "$project_dir/core/presentation_rules.h" "$work_dir/source/core/"
-cp "$project_dir/presentation-hub/"*.qml "$project_dir/presentation-hub/plugin.json" "$project_dir/presentation-hub/build-core.sh" "$work_dir/source/presentation-hub/"
-
-printf '%s\n' 'Building Presentation Hub core...'
-cmake -S "$work_dir/source" -B "$work_dir/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-cmake --build "$work_dir/build" --parallel
-
 mkdir -p "$plugins_dir"
 staging_dir=$(mktemp -d "$plugins_dir/.presentation-hub-install.XXXXXXXX")
-cp -R "$work_dir/source/presentation-hub/." "$staging_dir/"
+cp "$project_dir/presentation-hub/"*.qml "$project_dir/presentation-hub/plugin.json" "$staging_dir/"
 # The staged directory is on the same filesystem; never replace an existing path.
 mv -nT -- "$staging_dir" "$destination"
 if [ -e "$staging_dir" ]; then

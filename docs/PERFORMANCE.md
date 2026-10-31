@@ -4,6 +4,8 @@ These are point-in-time observations, not guarantees or a substitute for a long-
 
 ## Environment and method
 
+**Historical measurements:** The plugin has since moved to DMS NiriService events and no longer runs the C++ core for plugin operations. The figures below describe the earlier polling implementation and do not measure the current version.
+
 The audit on 2026-10-31 used an Intel Core i5-12450HX (12 logical CPUs), Niri 26.04, DMS 2.0.0, Quickshell 0.3.2, Qt 6.12.0, and two connected displays. A desktop session and other DMS plugins were active. CPU percentages below are relative to **one logical CPU**; they are not percentages of total machine capacity. Samples used Linux `/proc/<pid>/stat` CPU time and `/proc/<pid>/smaps_rollup` PSS and private dirty memory. Interactive workloads and graphics activity were not controlled.
 
 - The C++ core was compiled with AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer. Six fake-IPC integration tests passed, including invalid JSON and an oversized response. An additional 120 short-lived snapshot/move runs on a fake Niri socket produced no sanitizer diagnostics. This covers the core process, not the DMS QML engine or third-party libraries as a whole.

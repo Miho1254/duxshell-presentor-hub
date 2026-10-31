@@ -1,7 +1,7 @@
 # Presentation Hub
 <img width="644" height="866" alt="image" src="https://github.com/user-attachments/assets/faef2c8f-48c9-43e4-aad4-964a02dd15de" />
 
-A DMS plugin for presenting on an external display in Niri. Choose a window or duplicate a display, then control the audience screen from one place. A small C++/Qt core talks to Niri independently of DMS; the QML frontend provides the widget and background watcher.
+A DMS plugin for presenting on an external display in Niri. Choose a window or duplicate a display, then control the audience screen from one place. The plugin uses DMS’s Niri service for display and window state. An optional standalone C++/Qt core is provided separately for command-line use.
 
 > **Project status:** early development. Live audience preview is temporarily disabled after a reported DMS/Quickshell crash. A later DMS crash also occurred with preview disabled; the cause remains under investigation. See [Known limitations](#known-limitations).
 
@@ -17,20 +17,19 @@ A DMS plugin for presenting on an external display in Niri. Choose a window or d
 
 - A running [Niri](https://github.com/niri-wm/niri) session.
 - [DMS](https://github.com/duxlabs-dev/dux-shell) 2.0 or newer for the plugin.
-- Qt 6 Core and Network at runtime; Qt 6 development packages, CMake 3.20+ and a C++17 compiler to build.
 - `wl-mirror` on the DMS session's `PATH` **only for Duplicate**. The plugin neither bundles nor installs it; install and update it with your system package manager. For Arch Linux and CachyOS: `sudo pacman -S wl-mirror`.
-- `jq` for the live smoke test. Python 3 is needed only for integration tests.
+- For standalone core development only: Qt 6 development packages, CMake, a C++17 compiler, Python 3, and `jq` for the live smoke test.
 
 ## Install without the DMS Store
 
-Presentation Hub is not yet available in the DMS Store. You can install it manually with the installer below; no source editing is needed. There is **no prebuilt release yet**, so the installer builds the C++ core on your machine and requires a compiler, CMake and Qt 6 development files. The installed plugin is a separate copy; you do not need to keep the downloaded repository to use it.
+Presentation Hub is not yet available in the DMS Store. You can install it manually with the installer below. The plugin does not require compilation; the installed plugin is a separate copy.
 
 ### Arch Linux / CachyOS
 
-Install the build prerequisites (DMS and Niri must already be installed):
+Install Git if needed (DMS and Niri must already be installed):
 
 ```sh
-sudo pacman -S --needed git cmake base-devel qt6-base
+sudo pacman -S --needed git
 ```
 
 Download and install:
@@ -41,7 +40,7 @@ cd duxshell-presentor-hub
 ./scripts/install.sh
 ```
 
-On other distributions, install Git, CMake 3.20+, a C++17 compiler and Qt 6 Core/Network development packages through your package manager, then use the same download and install commands. The installer itself runs as your normal user; it does not install packages or use `sudo`.
+On other distributions, install Git and use the same download and install commands. The installer itself runs as your normal user; it does not install packages or use `sudo`.
 
 Next, open **DMS Settings → Plugins**, scan for plugins if needed, enable **Presentation Hub**, and add its widget to the bar. The installer uses `${XDG_CONFIG_HOME:-$HOME/.config}/dms/plugins/presentation-hub`. It refuses to overwrite an existing installation, including a development symlink or another plugin directory with the same ID.
 
@@ -59,7 +58,7 @@ There is no Store-based updater yet. The installer does not replace an existing 
 
 ### Store installation (if listed in the future)
 
-The DMS Store clones the repository but does not build its C++ core. After a Store install, open the widget and choose **Build core** when prompted. This explicit action requires CMake, a C++17 compiler, and Qt 6 development files; it does not install packages or download binaries. For Arch Linux / CachyOS, install `cmake`, `base-devel`, and `qt6-base` first. The core is built locally from this repository. `wl-mirror` remains optional for Duplicate. A Store entry and its availability are subject to registry review.
+If the registry accepts the plugin, install it from DMS Settings → Plugins. No build step is needed. `wl-mirror` remains optional for Duplicate.
 
 ## Using the widget
 
@@ -74,20 +73,20 @@ The session requests Wayland idle inhibition. This depends on compositor and idl
 
 ### Suggestions
 
-After the initial scan, the watcher checks active outputs about every three seconds and asks whether a newly detected external display should be used for presentations. Displays already present at startup are the baseline; a disconnection shorter than the polling interval can be missed.
+The watcher reacts to DMS Niri service updates and asks whether a newly detected external display should be used for presentations. Displays already present at startup are the baseline.
 
 The plugin can also suggest moving a fullscreen browser window, including videos. In plugin settings choose **Ask for browser fullscreen**, **Only during a session**, or **Manual only**. Manual only also disables experimental LibreOffice slideshow title suggestions. Browser IDs can be extended, allowed or excluded using comma-separated exact app IDs; find an ID with `niri msg windows`. The frontend matches Wayland toplevels to Niri windows by app ID and title and skips ambiguous matches. Suggestions are suppressed during duplication. At startup, already fullscreen windows are treated as the baseline.
 
 ## Standalone core
 
-The core uses `$NIRI_SOCKET`, writes JSON to stdout, and reports errors to stderr:
+The optional standalone core requires Qt 6 Core/Network development files, CMake and a C++17 compiler. Build it using the development commands below. The plugin does not use this core. It uses `$NIRI_SOCKET`, writes JSON to stdout, and reports errors to stderr:
 
 ```sh
 presentation-hub/bin/presentation-hub-core snapshot
 presentation-hub/bin/presentation-hub-core move --window 42 --output HDMI-A-1
 ```
 
-A snapshot combines multiple IPC queries and is not atomic. A move validates the window and output before requesting the action and queries again to confirm the resulting output. A failed confirmation does not prove that the move did not happen.
+The standalone core’s snapshot combines multiple IPC queries and is not atomic. Its move validates the window and output before requesting the action and queries again to confirm the resulting output. A failed confirmation does not prove that the move did not happen.
 
 ## Known limitations
 

@@ -5,8 +5,8 @@ import QtQuick.Dialogs
 import Quickshell
 import qs.Common
 import qs.DCommon.Widgets
-import qs.Services
 import qs.Modules.Plugins
+import qs.Services
 
 PluginComponent {
     id: root
@@ -18,6 +18,43 @@ PluginComponent {
         "state": "idle"
     })
     readonly property bool barMirrorActive: barMirrorInfo.state === "starting" || barMirrorInfo.state === "running" || barMirrorInfo.state === "stopping"
+
+    function candidate(appId, title) {
+        const app = String(appId || '').toLowerCase();
+        const text = String(title || '').toLowerCase();
+        if (['presenter', 'người thuyết trình', 'speaker notes', 'presenter notes'].some((x) => {
+            return text.includes(x);
+        }))
+            return false;
+
+        return (app.includes('impress') || app.includes('libreoffice')) && (text.includes('slide show') || text.includes('slideshow'));
+    }
+
+    function niriSnapshot(service) {
+        const outputs = Quickshell.screens.map((screen) => {
+            return Object.assign({
+            }, (service.outputs || {
+            })[screen.name] || {
+            }, {
+                "name": screen.name
+            });
+        }).sort((a, b) => {
+            return a.name.localeCompare(b.name);
+        });
+        const workspaces = service.workspaces || {
+        };
+        const windows = (service.windows || []).map((w) => {
+            return Object.assign({
+            }, w, {
+                "output": workspaces[w.workspace_id] ? workspaces[w.workspace_id].output : null,
+                "presentation_candidate": candidate(w.app_id, w.title)
+            });
+        });
+        return {
+            "outputs": outputs,
+            "windows": windows
+        };
+    }
 
     layerNamespacePlugin: "presentation-hub"
     // Keep breathing room around the panel on smaller or scaled displays.
@@ -39,6 +76,91 @@ PluginComponent {
         }
 
         target: PluginService
+    }
+
+    component MoveController: QtObject {
+        id: moveRoot
+
+        property var pending: []
+        property Timer verification
+
+        verification: Timer {
+            interval: 80
+            repeat: true
+            onTriggered: {
+                const state = moveRoot.snapshot();
+                const remaining = [];
+                for (const request of moveRoot.pending) {
+                    const window = state.windows.find((w) => {
+                        return w.id === request.id;
+                    });
+                    if (window && window.output === request.output)
+                        request.callback(true);
+                    else if (!window || !state.outputs.some((o) => {
+                        return o.name === request.output;
+                    }) || Date.now() >= request.deadline)
+                        request.callback(false);
+                    else
+                        remaining.push(request);
+                }
+                moveRoot.pending = remaining;
+                if (!remaining.length)
+                    stop();
+
+            }
+        }
+
+        function snapshot() {
+            const outputs = Quickshell.screens.map((screen) => {
+                return ({
+                    "name": screen.name
+                });
+            });
+            const workspaces = NiriService.workspaces || {
+            };
+            const windows = (NiriService.windows || []).map((w) => {
+                return ({
+                    "id": w.id,
+                    "output": workspaces[w.workspace_id] ? workspaces[w.workspace_id].output : null
+                });
+            });
+            return {
+                "outputs": outputs,
+                "windows": windows
+            };
+        }
+
+        // NiriService.send reports socket availability, not whether the move applied.
+        function move(id, output, callback) {
+            const state = moveRoot.snapshot();
+            if (!state.outputs.some((o) => {
+                return o.name === output;
+            }) || !state.windows.some((w) => {
+                return w.id === id;
+            })) {
+                callback(false);
+                return ;
+            }
+            if (!NiriService.send({
+                "Action": {
+                    "MoveWindowToMonitor": {
+                        "id": id,
+                        "output": output
+                    }
+                }
+            })) {
+                callback(false);
+                return ;
+            }
+            pending = pending.concat([{
+                "id": id,
+                "output": output,
+                "deadline": Date.now() + 2000,
+                "callback": callback
+            }]);
+            verification.restart();
+        }
+
     }
 
     horizontalBarPill: Component {
@@ -98,7 +220,6 @@ PluginComponent {
             property string message: ""
             property bool messageIsError: true
             property bool busy: false
-            property var coreInfo: PluginService.getGlobalVar("presentationHub", "core", { state: "checking", message: "" })
             property string mode: PluginService.getGlobalVar("presentationHub", "session", {
                 "active": false
             }).active ? "controls" : "window"
@@ -120,60 +241,43 @@ PluginComponent {
             property var lastMoved: PluginService.getGlobalVar("presentationHub", "lastMoved", null)
             property string mirrorDependency: PluginService.getGlobalVar("presentationHub", "mirrorDependency", "checking")
             readonly property bool mirrorActive: mirrorInfo.state === "starting" || mirrorInfo.state === "running" || mirrorInfo.state === "stopping"
-            // Resolve relative to this QML file so the plugin works from a symlink too.
-            readonly property string corePath: decodeURIComponent(Qt.resolvedUrl("bin/presentation-hub-core").toString().replace(/^file:\/\//, ""))
 
             function refresh() {
-                if (coreInfo.state !== "ready") return;
-                busy = true;
-                message = "";
-                messageIsError = true;
-                Proc.runCommand("presentationHub.snapshot", [corePath, "snapshot"], (out, code) => {
-                    panel.busy = false;
-                    if (code !== 0) {
-                        panel.message = "Cannot read Niri state. Check the Niri session and build the core, then refresh.";
-                        return;
-                    }
-                    try {
-                        const data = JSON.parse(out);
-                        panel.outputs = data.outputs;
-                        panel.windows = data.windows;
-                        if (!panel.outputs.some((o) => {
-                            return o.name === panel.mirrorSource;
-                        })) {
-                            const laptop = panel.outputs.find((o) => {
-                                return /^(edp|lvds|dsi)-/i.test(o.name);
-                            });
-                            panel.mirrorSource = laptop ? laptop.name : "";
-                        }
-                        if (!panel.outputs.some((o) => {
-                            return o.name === panel.target;
-                        })) {
-                            const preferred = pluginService.loadPluginData("presentationHub", "presentationOutput", "");
-                            panel.target = panel.outputs.some((o) => {
-                                return o.name === preferred;
-                            }) ? preferred : "";
-                        }
-                        if (panel.selectedWindow !== null && !panel.windows.some((w) => {
-                            return w.id === panel.selectedWindow;
-                        }))
-                            panel.selectedWindow = null;
+                const data = root.niriSnapshot(NiriService);
+                panel.outputs = data.outputs;
+                panel.windows = data.windows;
+                if (!panel.outputs.some((o) => {
+                    return o.name === panel.mirrorSource;
+                })) {
+                    const laptop = panel.outputs.find((o) => {
+                        return /^(edp|lvds|dsi)-/i.test(o.name);
+                    });
+                    panel.mirrorSource = laptop ? laptop.name : "";
+                }
+                if (!panel.outputs.some((o) => {
+                    return o.name === panel.target;
+                })) {
+                    const preferred = pluginService.loadPluginData("presentationHub", "presentationOutput", "");
+                    panel.target = panel.outputs.some((o) => {
+                        return o.name === preferred;
+                    }) ? preferred : "";
+                }
+                if (panel.selectedWindow !== null && !panel.windows.some((w) => {
+                    return w.id === panel.selectedWindow;
+                }))
+                    panel.selectedWindow = null;
 
-                        if (panel.lastMoved && !panel.windows.some((w) => {
-                            return w.id === panel.lastMoved.id;
-                        })) {
-                            panel.lastMoved = null;
-                            PluginService.setGlobalVar("presentationHub", "lastMoved", null);
-                        }
-                    } catch (e) {
-                        panel.message = "Could not read display and window information.";
-                    }
-                });
+                if (panel.lastMoved && !panel.windows.some((w) => {
+                    return w.id === panel.lastMoved.id;
+                })) {
+                    panel.lastMoved = null;
+                    PluginService.setGlobalVar("presentationHub", "lastMoved", null);
+                }
             }
 
             function move() {
                 if (selectedWindow === null || !target || busy)
-                    return;
+                    return ;
 
                 busy = true;
                 messageIsError = true;
@@ -183,11 +287,11 @@ PluginComponent {
                 });
                 const oldOutput = original ? original.output : "";
                 const newOutput = target;
-                Proc.runCommand("presentationHub.move", [corePath, "move", "--window", String(movedId), "--output", newOutput], (out, code) => {
+                mover.move(movedId, newOutput, (success) => {
                     panel.busy = false;
-                    if (code !== 0) {
+                    if (!success) {
                         panel.message = "Could not move the window. It or the display may have disappeared.";
-                        return;
+                        return ;
                     }
                     panel.messageIsError = false;
                     panel.lastMoved = oldOutput && oldOutput !== newOutput ? {
@@ -203,7 +307,7 @@ PluginComponent {
 
             function bringSelectedBack() {
                 if (selectedWindow === null || busy)
-                    return;
+                    return ;
 
                 const laptop = outputs.find((o) => {
                     return /^(edp|lvds|dsi)-/i.test(o.name);
@@ -211,15 +315,15 @@ PluginComponent {
                 if (!laptop) {
                     messageIsError = true;
                     message = "No built-in display found. Choose a display and move the window manually.";
-                    return;
+                    return ;
                 }
                 const id = selectedWindow;
                 busy = true;
-                Proc.runCommand("presentationHub.bringBack", [corePath, "move", "--window", String(id), "--output", laptop.name], (out, code) => {
+                mover.move(id, laptop.name, (success) => {
                     panel.busy = false;
-                    panel.messageIsError = code !== 0;
-                    panel.message = code === 0 ? "Window moved to " + laptop.name + "." : "Could not move the window. Refresh and try again.";
-                    if (code === 0)
+                    panel.messageIsError = !success;
+                    panel.message = success ? "Window moved to " + laptop.name + "." : "Could not move the window. Refresh and try again.";
+                    if (success)
                         panel.refresh();
 
                 });
@@ -227,38 +331,32 @@ PluginComponent {
 
             function returnWindow() {
                 if (!lastMoved || busy)
-                    return;
+                    return ;
 
                 busy = true;
                 const entry = lastMoved;
-                Proc.runCommand("presentationHub.returnWindow", [corePath, "snapshot"], (out, code) => {
-                    try {
-                        const state = JSON.parse(out);
-                        const window = state.windows.find((w) => {
-                            return w.id === entry.id;
-                        });
-                        if (code !== 0 || !window || window.output !== entry.target || !state.outputs.some((o) => {
-                            return o.name === entry.output;
-                        }))
-                            throw new Error("changed");
-
-                    } catch (e) {
-                        panel.busy = false;
-                        panel.messageIsError = true;
-                        panel.message = "Window or original display changed. Refresh and move it manually.";
+                const state = root.niriSnapshot(NiriService);
+                const window = state.windows.find((w) => {
+                    return w.id === entry.id;
+                });
+                if (!window || window.output !== entry.target || !state.outputs.some((o) => {
+                    return o.name === entry.output;
+                })) {
+                    busy = false;
+                    messageIsError = true;
+                    message = "Window or original display changed. Refresh and move it manually.";
+                    lastMoved = null;
+                    PluginService.setGlobalVar("presentationHub", "lastMoved", null);
+                    return ;
+                }
+                mover.move(entry.id, entry.output, (success) => {
+                    panel.busy = false;
+                    panel.messageIsError = !success;
+                    panel.message = success ? "Window returned to " + entry.output + "." : "Could not return window. Check the display and try again.";
+                    if (success) {
                         panel.lastMoved = null;
                         PluginService.setGlobalVar("presentationHub", "lastMoved", null);
-                        return;
                     }
-                    Proc.runCommand("presentationHub.returnMove", [corePath, "move", "--window", String(entry.id), "--output", entry.output], (result, moveCode) => {
-                        panel.busy = false;
-                        panel.messageIsError = moveCode !== 0;
-                        panel.message = moveCode === 0 ? "Window returned to " + entry.output + "." : "Could not return window. Check the display and try again.";
-                        if (moveCode === 0) {
-                            panel.lastMoved = null;
-                            PluginService.setGlobalVar("presentationHub", "lastMoved", null);
-                        }
-                    });
                 });
             }
 
@@ -277,7 +375,7 @@ PluginComponent {
 
             function startPresentation() {
                 if (busy || sessionInfo.active || sessionInfo.starting)
-                    return;
+                    return ;
 
                 busy = true;
                 message = "";
@@ -294,7 +392,7 @@ PluginComponent {
 
             function mirrorCommand(action) {
                 if (busy)
-                    return;
+                    return ;
 
                 busy = true;
                 message = "";
@@ -306,12 +404,6 @@ PluginComponent {
                         panel.message = "Could not contact Presentation Hub. Check that the plugin is enabled.";
                     else if (!out.trim().startsWith("Starting mirror") && !out.trim().startsWith("Stopping mirror"))
                         panel.message = out.trim() || "Mirror request failed.";
-                });
-            }
-
-            function requestCoreBuild() {
-                Proc.runCommand("presentationHub.requestCoreBuild", ["dms", "ipc", "call", "presentationHub", "buildCore"], (out, code) => {
-                    if (code !== 0) panel.message = "Could not start the build. Check that the plugin is enabled.";
                 });
             }
 
@@ -336,6 +428,34 @@ PluginComponent {
                 refresh();
             }
 
+            MoveController {
+                id: mover
+            }
+
+            Connections {
+                function onScreensChanged() {
+                    panel.refresh();
+                }
+
+                target: Quickshell
+            }
+
+            Connections {
+                function onOutputsChanged() {
+                    panel.refresh();
+                }
+
+                function onWorkspacesChanged() {
+                    panel.refresh();
+                }
+
+                function onWindowsChanged() {
+                    panel.refresh();
+                }
+
+                target: NiriService
+            }
+
             FileDialog {
                 id: coverImageDialog
 
@@ -347,7 +467,7 @@ PluginComponent {
                     if (!url.startsWith("file:///")) {
                         panel.messageIsError = true;
                         panel.message = "Choose a local image file.";
-                        return;
+                        return ;
                     }
                     panel.coverImagePath = decodeURIComponent(url.slice(7));
                     pluginService.savePluginData("presentationHub", "coverImage", panel.coverImagePath);
@@ -359,10 +479,6 @@ PluginComponent {
 
             Connections {
                 function onGlobalVarChanged(id, name) {
-                    if (id === "presentationHub" && name === "core") {
-                        panel.coreInfo = PluginService.getGlobalVar("presentationHub", "core", { state: "checking", message: "" });
-                        if (panel.coreInfo.state === "ready") panel.refresh();
-                    }
                     if (id === "presentationHub" && name === "mirror")
                         panel.mirrorInfo = PluginService.getGlobalVar("presentationHub", "mirror", {
                         "state": "idle",
@@ -400,9 +516,11 @@ PluginComponent {
                 width: parent.width
                 implicitHeight: Math.max(100, root.popoutHeight - panel.headerHeight - panel.detailsHeight - Theme.spacingXL)
 
-                Flickable {
+                DFlickable {
                     id: contentViewport
 
+                    fadeEdges: false
+                    showScrollBar: false
                     anchors.fill: parent
                     contentWidth: width
                     contentHeight: contentColumn.implicitHeight
@@ -415,18 +533,9 @@ PluginComponent {
                         width: contentViewport.width
                         spacing: Theme.spacingM
 
-                        Column {
-                            visible: panel.coreInfo.state !== "ready"
-                            width: parent.width; spacing: Theme.spacingS
-                            StyledText { text: "Set up Presentation Hub"; color: Theme.surfaceText; font.pixelSize: Theme.fontSizeMedium; font.weight: Font.DemiBold }
-                            StyledText { width: parent.width; text: panel.coreInfo.message || "Checking the core…"; color: panel.coreInfo.state === "error" ? Theme.error : Theme.surfaceVariantText; wrapMode: Text.WordWrap }
-                            DButton { visible: panel.coreInfo.state === "missing" || panel.coreInfo.state === "error"; text: "Build core"; iconName: "build"; onClicked: panel.requestCoreBuild() }
-                        }
-
                         Rectangle {
-                            visible: panel.coreInfo.state === "ready"
                             width: parent.width
-                            height: 54
+                            height: Theme.fontSizeMedium + Theme.spacingM * 3 + Theme.spacingXS
                             radius: Theme.cornerRadius
                             color: (panel.mirrorActive || panel.sessionInfo.active) ? Theme.primaryContainer : Theme.cardSurface
 
@@ -438,7 +547,7 @@ PluginComponent {
 
                                 DIcon {
                                     name: panel.mirrorActive ? "screen_share" : "desktop_windows"
-                                    size: 22
+                                    size: Theme.iconSizeMedium
                                     color: (panel.mirrorActive || panel.sessionInfo.active) ? Theme.primary : Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -483,9 +592,8 @@ PluginComponent {
                         }
 
                         Rectangle {
-                            visible: panel.coreInfo.state === "ready"
                             width: parent.width
-                            height: 48
+                            height: Theme.fieldHeight + Theme.spacingXS
                             radius: Theme.cornerRadius
                             color: Theme.cardSurface
 
@@ -528,7 +636,7 @@ PluginComponent {
 
                             readonly property real columnWidth: width
 
-                            visible: panel.coreInfo.state === "ready" && panel.mode !== "controls"
+                            visible: panel.mode !== "controls"
                             width: parent.width
                             spacing: Theme.spacingL
 
@@ -542,7 +650,7 @@ PluginComponent {
 
                                     DIcon {
                                         name: "screen_share"
-                                        size: 18
+                                        size: Theme.iconSizeMedium
                                         color: Theme.primary
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -627,7 +735,7 @@ PluginComponent {
 
                                         DIcon {
                                             name: "web_asset"
-                                            size: 18
+                                            size: Theme.iconSizeMedium
                                             color: Theme.primary
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
@@ -650,12 +758,15 @@ PluginComponent {
                                         wrapMode: Text.WordWrap
                                     }
 
-                                    ListView {
+                                    DListView {
                                         id: windowList
 
-                                        readonly property real rowHeight: 56
+                                        readonly property real rowHeight: Theme.fontSizeMedium + Theme.spacingM * 3 + Theme.spacingXS
                                         readonly property int visibleRows: Math.min(count, root.popoutHeight >= 700 ? 4 : 3)
 
+                                        fadeEdges: false
+                                        showScrollBar: false
+                                        wheelEnabled: false
                                         width: parent.width
                                         height: visibleRows > 0 ? visibleRows * rowHeight + (visibleRows - 1) * spacing : 0
                                         clip: true
@@ -736,9 +847,9 @@ PluginComponent {
                                                 event.accepted = true;
                                             }
                                             onActiveFocusChanged: {
-                                                if (activeFocus) {
+                                                if (activeFocus)
                                                     ListView.view.positionViewAtIndex(index, ListView.Contain);
-                                                }
+
                                             }
 
                                             HoverHandler {
@@ -756,7 +867,7 @@ PluginComponent {
                                                 anchors.leftMargin: Theme.spacingM
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 name: "web_asset"
-                                                size: 20
+                                                size: Theme.iconSizeMedium
                                                 color: panel.selectedWindow === modelData.id ? Theme.primary : Theme.surfaceVariantText
                                             }
 
@@ -824,7 +935,7 @@ PluginComponent {
 
                                         DIcon {
                                             name: "laptop_mac"
-                                            size: 18
+                                            size: Theme.iconSizeMedium
                                             color: Theme.primary
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
@@ -886,7 +997,7 @@ PluginComponent {
                                             anchors.top: parent.top
                                             anchors.topMargin: Theme.spacingM
                                             name: "visibility"
-                                            size: 18
+                                            size: Theme.iconSizeMedium
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -1067,14 +1178,14 @@ PluginComponent {
                         }
 
                         Column {
-                            visible: panel.coreInfo.state === "ready" && panel.mode === "controls"
+                            visible: panel.mode === "controls"
                             width: parent.width
                             spacing: Theme.spacingL
 
                             // The destination is shared with the Windows and Duplicate tabs.
                             Rectangle {
                                 width: parent.width
-                                height: 62
+                                height: Theme.fontSizeMedium + Theme.spacingXL * 2
                                 radius: Theme.cornerRadius
                                 color: Theme.cardSurface
 
@@ -1086,7 +1197,7 @@ PluginComponent {
 
                                     DIcon {
                                         name: "monitor"
-                                        size: 22
+                                        size: Theme.iconSizeMedium
                                         color: Theme.primary
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -1127,35 +1238,6 @@ PluginComponent {
                                         onClicked: panel.displayCommand("identify", panel.target)
                                     }
 
-                                }
-
-                            }
-
-                            Column {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: "Audience preview"
-                                    color: Theme.surfaceText
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.DemiBold
-                                }
-
-                                StyledText {
-                                    width: parent.width
-                                    text: "See what is currently shown on the audience display."
-                                    color: Theme.surfaceVariantText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                StyledText {
-                                    width: parent.width
-                                    text: "Live preview is temporarily unavailable while a DMS crash is investigated. Other controls remain available."
-                                    color: Theme.surfaceVariantText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    wrapMode: Text.WordWrap
                                 }
 
                             }
@@ -1217,12 +1299,23 @@ PluginComponent {
                                         asynchronous: true
                                     }
 
-                                    StyledText {
+                                    Rectangle {
                                         anchors.centerIn: parent
                                         visible: panel.coverImagePath === "" || coverThumbnail.status === Image.Error
-                                        text: panel.coverImagePath === "" ? "Black screen" : "Image unavailable"
-                                        color: "white"
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        width: coverLabel.implicitWidth + Theme.spacingM * 2
+                                        height: coverLabel.implicitHeight + Theme.spacingS * 2
+                                        radius: Theme.cornerRadius
+                                        color: Theme.surface
+
+                                        StyledText {
+                                            id: coverLabel
+
+                                            anchors.centerIn: parent
+                                            text: panel.coverImagePath === "" ? "Black screen" : "Image unavailable"
+                                            color: Theme.surfaceText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                        }
+
                                     }
 
                                 }
@@ -1307,7 +1400,7 @@ PluginComponent {
                 signal triggered()
 
                 width: parent.width
-                height: 60
+                height: Theme.fontSizeMedium + Theme.spacingXL * 2
                 radius: Theme.cornerRadius
                 color: selected ? Theme.primaryContainer : (hover.hovered ? Theme.chipSurface : Theme.cardSurface)
                 border.width: activeFocus ? 2 : 0
@@ -1318,9 +1411,9 @@ PluginComponent {
                 Accessible.name: label + ", " + detail
                 Accessible.description: selected ? "Selected" : "Select display"
                 Accessible.onPressAction: {
-                    if (enabled) {
+                    if (enabled)
                         triggered();
-                    }
+
                 }
                 Keys.onReturnPressed: (event) => {
                     if (enabled)
@@ -1347,9 +1440,9 @@ PluginComponent {
 
                 TapHandler {
                     onTapped: {
-                        if (choice.enabled) {
+                        if (choice.enabled)
                             choice.triggered();
-                        }
+
                     }
                 }
 
@@ -1358,7 +1451,7 @@ PluginComponent {
 
                     width: 36
                     height: 36
-                    radius: 12
+                    radius: Theme.cornerRadius
                     anchors.left: parent.left
                     anchors.leftMargin: Theme.spacingS
                     anchors.verticalCenter: parent.verticalCenter
@@ -1367,7 +1460,7 @@ PluginComponent {
                     DIcon {
                         anchors.centerIn: parent
                         name: choice.icon
-                        size: 19
+                        size: Theme.iconSizeMedium
                         color: choice.selected ? Theme.onPrimary : Theme.surfaceText
                     }
 
@@ -1407,7 +1500,7 @@ PluginComponent {
                     anchors.rightMargin: Theme.spacingM
                     anchors.verticalCenter: parent.verticalCenter
                     name: choice.selected ? "check_circle" : "radio_button_unchecked"
-                    size: 19
+                    size: Theme.iconSizeMedium
                     color: choice.selected ? Theme.primary : Theme.surfaceVariantText
                 }
 
@@ -1423,7 +1516,7 @@ PluginComponent {
                 signal triggered()
 
                 width: (parent.width - 2 * Theme.spacingXS) / 3
-                height: 40
+                height: Theme.iconSizeMedium + Theme.spacingM * 2
                 radius: Theme.cornerRadius
                 color: selected ? Theme.primaryContainer : (hover.hovered ? Theme.chipSurface : "transparent")
                 border.width: activeFocus ? 2 : 0
@@ -1460,7 +1553,7 @@ PluginComponent {
 
                     DIcon {
                         name: modeButton.icon
-                        size: 18
+                        size: Theme.iconSizeMedium
                         color: modeButton.selected ? Theme.primary : Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
