@@ -15,10 +15,35 @@ The audit on 2026-10-31 used an Intel Core i5-12450HX (12 logical CPUs), Niri 26
 
 - During a 30-second Duplicate run, a 21-second post-warm-up sample of `wl-mirror` used 2.8% of one CPU; PSS and private dirty memory remained at 31.01 MiB and 13.62 MiB respectively. This short test does not establish long-session behavior, and does not include compositor capture/rendering cost. The plugin stopped the process afterward.
 
-The plugin starts a core process for each periodic snapshot. It now discards `wl-mirror` stderr instead of retaining an unlimited stream in a `StdioCollector`, and removes stale or duplicate pending prompt entries as windows and outputs change.
+The current plugin obtains Niri state from DMS events and does not launch the standalone core for snapshots. It discards `wl-mirror` stderr instead of retaining an unlimited stream in a `StdioCollector`, and removes stale or duplicate pending prompt entries as windows and outputs change.
 
 ## Unresolved crash and limits
 
 The desktop reported two DMS/Quickshell SIGSEGV crashes during this development session. The first was reported immediately after opening live preview; the second occurred with live preview disabled while the user was interacting with the desktop/widget. The first stack stopped in Qt Wayland; the second in QML garbage collection. Niri remained running. These observations do not establish a root cause. Live preview remains disabled, and further isolation on a disposable session is needed before claiming it or the widget stable.
 
 Neither the short A/B measurement nor the sanitized short-lived core tests establish the absence of a long-running DMS/Qt memory leak or increasing CPU use. A longer isolated run, separate per-plugin profiling, active presentation and repeated hotplug testing are still needed. No crash was intentionally reproduced on the user's desktop.
+
+## Follow-up investigation (2026-10-31)
+
+The two original Quickshell core dumps were still available. GDB reproduced the recorded
+stacks: the first stops in Qt Wayland event dispatch, and the second in the QML JavaScript
+garbage collector. Debug information for the relevant Qt libraries was unavailable;
+some unrelated installed libraries no longer matched the core-file build IDs. Neither
+stack identifies a Presentation Hub QML line or establishes which component caused the
+crash.
+
+A short follow-up used a separate DMS instance inside Niri's nested X11 backend on Xvfb,
+with software rendering, a private D-Bus session, an inaccessible system bus, a temporary
+home/config/runtime directory, and one virtual output. The DMS version and plugin source
+were the installed DMS 2.0.0 and the current plugin under test. With the plugin disabled,
+15 settings open/close request pairs completed without DMS exiting. With the plugin
+enabled, 25 widget open/close request pairs completed in one run; a separate run completed
+20 pairs with clicks on the Windows, Duplicate, and Controls tab positions between each
+pair. Screenshots confirmed that the widget and Duplicate tab were rendered. The DMS
+process did not exit during these short runs. DMS emitted unrelated warnings in the
+isolated environment, including errors in a settings callback with the plugin disabled.
+
+These runs used different actions for the enabled and disabled cases, a single virtual
+display, and no hardware screencopy, hotplug, or live preview. They do not reproduce the
+original two-display workload and cannot establish crash freedom or rule out the plugin.
+The crash cause remains unknown, and live preview remains disabled.

@@ -618,7 +618,7 @@ PluginComponent {
 
         Rectangle {
             anchors.centerIn: parent
-            width: Math.min(parent.width - 40, identifyLabel.implicitWidth + 80)
+            width: Math.max(0, Math.min(parent.width - Theme.spacingXL * 2, identifyLabel.implicitWidth + Theme.spacingXL * 4))
             height: Theme.fontSizeDisplay + Theme.spacingXL * 3
             radius: Theme.cornerRadiusL
             color: Theme.surface

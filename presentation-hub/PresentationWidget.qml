@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import QtQuick
-import QtQuick.Dialogs
 import Quickshell
 import qs.Common
 import qs.DCommon.Widgets
 import qs.Modules.Plugins
+import qs.Modals.FileBrowser
 import qs.Services
 
 PluginComponent {
@@ -59,7 +59,7 @@ PluginComponent {
     layerNamespacePlugin: "presentation-hub"
     // Keep breathing room around the panel on smaller or scaled displays.
     popoutWidth: root.parentScreen ? Math.max(1, Math.min(640, root.parentScreen.width - 32)) : 640
-    popoutHeight: root.parentScreen ? Math.max(1, Math.min(860, root.parentScreen.height - 80)) : 860
+    popoutHeight: root.parentScreen ? Math.max(1, Math.min(860, root.parentScreen.height - (Theme.spacingXL * 3 + Theme.spacingS))) : 860
 
     Connections {
         function onGlobalVarChanged(id, name) {
@@ -175,9 +175,9 @@ PluginComponent {
 
             Rectangle {
                 visible: root.barMirrorActive || root.barSessionInfo.active
-                width: 6
-                height: 6
-                radius: 3
+                width: Theme.spacingXS + Theme.spacingXXS
+                height: width
+                radius: width / 2
                 color: Theme.primary
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -198,9 +198,9 @@ PluginComponent {
 
             Rectangle {
                 visible: root.barMirrorActive || root.barSessionInfo.active
-                width: 6
-                height: 6
-                radius: 3
+                width: Theme.spacingXS + Theme.spacingXXS
+                height: width
+                radius: width / 2
                 color: Theme.primary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
@@ -456,24 +456,21 @@ PluginComponent {
                 target: NiriService
             }
 
-            FileDialog {
+            FileBrowserModal {
                 id: coverImageDialog
-
-                title: "Choose audience cover image"
-                nameFilters: ["Images (*.png *.jpg *.jpeg *.webp *.bmp *.svg)", "All files (*)"]
-                fileMode: FileDialog.OpenFile
-                onAccepted: {
-                    const url = selectedFile.toString();
-                    if (!url.startsWith("file:///")) {
+                browserTitle: "Choose audience cover image"
+                bucket: "presentation-cover"
+                filters: ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.svg"]
+                onAccepted: paths => {
+                    if (!paths || paths.length === 0 || !String(paths[0]).startsWith("/")) {
                         panel.messageIsError = true;
                         panel.message = "Choose a local image file.";
-                        return ;
+                        return;
                     }
-                    panel.coverImagePath = decodeURIComponent(url.slice(7));
+                    panel.coverImagePath = String(paths[0]);
                     pluginService.savePluginData("presentationHub", "coverImage", panel.coverImagePath);
                     if (panel.coverInfo.active)
                         panel.displayCommand("showCover", panel.coverInfo.output);
-
                 }
             }
 
@@ -553,7 +550,7 @@ PluginComponent {
                                 }
 
                                 Column {
-                                    width: Math.max(0, parent.width - 22 - Theme.spacingS - (stopMirrorButton.visible ? stopMirrorButton.width + Theme.spacingS : 0))
+                                    width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingS - (stopMirrorButton.visible ? stopMirrorButton.width + Theme.spacingS : 0))
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 2
 
@@ -599,7 +596,7 @@ PluginComponent {
 
                             Row {
                                 anchors.fill: parent
-                                anchors.margins: 4
+                                anchors.margins: Theme.spacingXS
                                 spacing: Theme.spacingXS
 
                                 ModeButton {
@@ -811,7 +808,7 @@ PluginComponent {
                                             parent: windowList
                                             z: 10
                                             visible: windowList.contentHeight > windowList.height
-                                            width: 3
+                                            width: Theme.spacingXS
                                             radius: width / 2
                                             color: Theme.outlineVariant
                                             anchors.right: parent.right
@@ -1203,7 +1200,7 @@ PluginComponent {
                                     }
 
                                     Column {
-                                        width: Math.max(0, parent.width - 22 - Theme.spacingS * 2 - identifyButton.width)
+                                        width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingS * 2 - identifyButton.width)
                                         anchors.verticalCenter: parent.verticalCenter
                                         spacing: 2
 
@@ -1379,7 +1376,7 @@ PluginComponent {
 
                 Rectangle {
                     visible: contentViewport.contentHeight > contentViewport.height
-                    width: 3
+                    width: Theme.spacingXS
                     radius: width / 2
                     color: Theme.outlineVariant
                     anchors.right: parent.right
@@ -1449,8 +1446,8 @@ PluginComponent {
                 Rectangle {
                     id: iconBox
 
-                    width: 36
-                    height: 36
+                    width: Theme.iconSizeMedium + Theme.spacingS * 2
+                    height: width
                     radius: Theme.cornerRadius
                     anchors.left: parent.left
                     anchors.leftMargin: Theme.spacingS
