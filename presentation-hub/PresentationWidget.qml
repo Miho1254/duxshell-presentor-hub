@@ -58,8 +58,10 @@ PluginComponent {
 
     layerNamespacePlugin: "presentation-hub"
     // Keep breathing room around the panel on smaller or scaled displays.
-    popoutWidth: root.parentScreen ? Math.max(1, Math.min(640, root.parentScreen.width - 32)) : 640
-    popoutHeight: root.parentScreen ? Math.max(1, Math.min(860, root.parentScreen.height - (Theme.spacingXL * 3 + Theme.spacingS))) : 860
+    readonly property real desiredPopoutWidth: Theme.fontSizeMedium * 46
+    readonly property real desiredPopoutHeight: Theme.fontSizeMedium * 61
+    popoutWidth: root.parentScreen ? Math.max(1, Math.min(desiredPopoutWidth, root.parentScreen.width - Theme.spacingL * 2)) : desiredPopoutWidth
+    popoutHeight: root.parentScreen ? Math.max(1, Math.min(desiredPopoutHeight, root.parentScreen.height - (Theme.spacingXL * 3 + Theme.spacingS))) : desiredPopoutHeight
 
     Connections {
         function onGlobalVarChanged(id, name) {
@@ -360,59 +362,51 @@ PluginComponent {
                 });
             }
 
-            function displayCommand(action, output) {
-                const args = ["dms", "ipc", "call", "presentationHub", action];
-                if (output)
-                    args.push(output);
+            function daemonRequest(action, args) {
+                const daemon = PluginService.pluginDaemonInstances["presentationHub"];
+                if (!daemon || typeof daemon.request !== "function")
+                    return "Presentation Hub is not ready. Check that the plugin is enabled.";
+                try {
+                    return String(daemon.request(action, args));
+                } catch (error) {
+                    console.warn("Presentation Hub: daemon request failed", action, error);
+                    return "Could not contact Presentation Hub. Check that the plugin is enabled.";
+                }
+            }
 
-                Proc.runCommand("presentationHub.displayControl", args, (out, code) => {
-                    if (code !== 0 || out.trim() === "Display not connected") {
-                        panel.messageIsError = true;
-                        panel.message = "Display unavailable. Refresh and choose a connected display.";
-                    }
-                });
+            function displayCommand(action, output) {
+                const result = daemonRequest(action, [output || ""]);
+                const success = ["Audience covered", "Audience restored", "Identifying display", "Session ended"];
+                if (!success.includes(result)) {
+                    messageIsError = true;
+                    message = result;
+                }
             }
 
             function startPresentation() {
                 if (busy || sessionInfo.active || sessionInfo.starting)
-                    return ;
-
-                busy = true;
+                    return;
                 message = "";
                 messageIsError = true;
-                const args = ["dms", "ipc", "call", "presentationHub", "startPresentation", target, mode, mirrorSource || "-", selectedWindow === null ? "-" : String(selectedWindow), sessionDnd ? "true" : "false"];
-                Proc.runCommand("presentationHub.startPresentation", args, (out, code) => {
-                    panel.busy = false;
-                    const result = out.trim();
-                    if (code !== 0 || (result !== "Session started" && result !== "Starting session"))
-                        panel.message = result || "Could not start presentation.";
-
-                });
+                const result = daemonRequest("startPresentation", [target, mode, mirrorSource || "-", selectedWindow === null ? "-" : String(selectedWindow), sessionDnd ? "true" : "false"]);
+                if (result !== "Session started" && result !== "Starting session")
+                    message = result || "Could not start presentation.";
             }
 
             function mirrorCommand(action) {
                 if (busy)
-                    return ;
-
-                busy = true;
+                    return;
                 message = "";
                 messageIsError = true;
-                const args = action === "startMirror" ? ["dms", "ipc", "call", "presentationHub", action, mirrorSource, target] : ["dms", "ipc", "call", "presentationHub", action];
-                Proc.runCommand("presentationHub.mirrorControl", args, (out, code) => {
-                    panel.busy = false;
-                    if (code !== 0)
-                        panel.message = "Could not contact Presentation Hub. Check that the plugin is enabled.";
-                    else if (!out.trim().startsWith("Starting mirror") && !out.trim().startsWith("Stopping mirror"))
-                        panel.message = out.trim() || "Mirror request failed.";
-                });
+                const result = daemonRequest(action, [mirrorSource, target]);
+                if (!result.startsWith("Starting mirror") && !result.startsWith("Stopping mirror"))
+                    message = result || "Mirror request failed.";
             }
 
             function checkMirrorDependency() {
-                Proc.runCommand("presentationHub.checkMirror", ["dms", "ipc", "call", "presentationHub", "checkMirror"], (out, code) => {
-                    if (code !== 0)
-                        panel.message = "Could not check wl-mirror. Check that the plugin is enabled.";
-
-                });
+                const result = daemonRequest("checkMirror", []);
+                if (result !== "Checking wl-mirror")
+                    message = result;
             }
 
             function displayDescription(output) {
@@ -517,7 +511,6 @@ PluginComponent {
                     id: contentViewport
 
                     fadeEdges: false
-                    showScrollBar: false
                     anchors.fill: parent
                     contentWidth: width
                     contentHeight: contentColumn.implicitHeight
@@ -601,14 +594,14 @@ PluginComponent {
 
                                 ModeButton {
                                     label: "Windows"
-                                    icon: "web_asset"
+                                    symbolName: "web_asset"
                                     selected: panel.mode === "window"
                                     onTriggered: panel.mode = "window"
                                 }
 
                                 ModeButton {
                                     label: "Duplicate"
-                                    icon: "content_copy"
+                                    symbolName: "content_copy"
                                     selected: panel.mode === "mirror"
                                     onTriggered: {
                                         panel.mode = "mirror";
@@ -619,7 +612,7 @@ PluginComponent {
 
                                 ModeButton {
                                     label: "Controls"
-                                    icon: "tune"
+                                    symbolName: "tune"
                                     selected: panel.mode === "controls"
                                     onTriggered: panel.mode = "controls"
                                 }
@@ -690,10 +683,10 @@ PluginComponent {
                                         ChoiceRow {
                                             required property var modelData
 
-                                            width: audienceChoices.width >= 480 ? (audienceChoices.width - audienceChoices.spacing) / 2 : audienceChoices.width
+                                            width: audienceChoices.width >= Theme.fontSizeMedium * 34 ? (audienceChoices.width - audienceChoices.spacing) / 2 : audienceChoices.width
                                             label: modelData.name
                                             detail: panel.displayDescription(modelData)
-                                            icon: /^(edp|lvds|dsi)-/i.test(modelData.name) ? "laptop_mac" : "monitor"
+                                            symbolName: /^(edp|lvds|dsi)-/i.test(modelData.name) ? "laptop_mac" : "monitor"
                                             selected: panel.target === modelData.name
                                             enabled: !panel.mirrorActive && !panel.sessionInfo.active
                                             onTriggered: {
@@ -762,8 +755,6 @@ PluginComponent {
                                         readonly property int visibleRows: Math.min(count, root.popoutHeight >= 700 ? 4 : 3)
 
                                         fadeEdges: false
-                                        showScrollBar: false
-                                        wheelEnabled: false
                                         width: parent.width
                                         height: visibleRows > 0 ? visibleRows * rowHeight + (visibleRows - 1) * spacing : 0
                                         clip: true
@@ -793,29 +784,6 @@ PluginComponent {
                                             event.accepted = true;
                                         }
 
-                                        WheelHandler {
-                                            target: null
-                                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                                            onWheel: (event) => {
-                                                const delta = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 120 * windowList.rowHeight;
-                                                const maxY = Math.max(windowList.originY, windowList.originY + windowList.contentHeight - windowList.height);
-                                                windowList.contentY = Math.max(windowList.originY, Math.min(maxY, windowList.contentY - delta));
-                                                event.accepted = true;
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            parent: windowList
-                                            z: 10
-                                            visible: windowList.contentHeight > windowList.height
-                                            width: Theme.spacingXS
-                                            radius: width / 2
-                                            color: Theme.outlineVariant
-                                            anchors.right: parent.right
-                                            height: Math.max(18, windowList.height * windowList.height / windowList.contentHeight)
-                                            y: (windowList.height - height) * (windowList.contentY - windowList.originY) / Math.max(1, windowList.contentHeight - windowList.height)
-                                        }
-
                                         delegate: Rectangle {
                                             required property var modelData
                                             required property int index
@@ -824,7 +792,7 @@ PluginComponent {
                                             height: windowList.rowHeight
                                             radius: Theme.cornerRadius
                                             color: panel.selectedWindow === modelData.id ? Theme.primaryContainer : (windowHover.hovered ? Theme.chipSurface : Theme.cardSurface)
-                                            border.width: activeFocus || (windowList.activeFocus && windowList.currentIndex === index) ? 2 : 0
+                                            border.width: activeFocus || (windowList.activeFocus && windowList.currentIndex === index) ? Theme.spacingXXS : 0
                                             border.color: Theme.primary
                                             activeFocusOnTab: true
                                             Accessible.role: Accessible.Button
@@ -967,10 +935,10 @@ PluginComponent {
                                             ChoiceRow {
                                                 required property var modelData
 
-                                                width: sourceChoices.width >= 480 ? (sourceChoices.width - sourceChoices.spacing) / 2 : sourceChoices.width
+                                                width: sourceChoices.width >= Theme.fontSizeMedium * 34 ? (sourceChoices.width - sourceChoices.spacing) / 2 : sourceChoices.width
                                                 label: modelData.name
                                                 detail: panel.displayDescription(modelData)
-                                                icon: /^(edp|lvds|dsi)-/i.test(modelData.name) ? "laptop_mac" : "monitor"
+                                                symbolName: /^(edp|lvds|dsi)-/i.test(modelData.name) ? "laptop_mac" : "monitor"
                                                 selected: panel.mirrorSource === modelData.name
                                                 enabled: !panel.mirrorActive
                                                 onTriggered: panel.mirrorSource = modelData.name
@@ -1054,7 +1022,7 @@ PluginComponent {
                                     ChoiceRow {
                                         label: "Do Not Disturb"
                                         detail: panel.sessionDnd ? "Enabled during this session" : "Keep current notification settings"
-                                        icon: "notifications_off"
+                                        symbolName: "notifications_off"
                                         selected: panel.sessionDnd
                                         onTriggered: panel.sessionDnd = !panel.sessionDnd
                                     }
@@ -1282,7 +1250,7 @@ PluginComponent {
 
                                 Rectangle {
                                     width: parent.width
-                                    height: Math.min(180, Math.max(110, width * 0.3))
+                                    height: Math.min(Theme.fontSizeMedium * 13, Math.max(Theme.fontSizeMedium * 8, width * 0.3))
                                     color: "black"
                                     radius: Theme.cornerRadius
                                     clip: true
@@ -1374,74 +1342,26 @@ PluginComponent {
 
                 }
 
-                Rectangle {
-                    visible: contentViewport.contentHeight > contentViewport.height
-                    width: Theme.spacingXS
-                    radius: width / 2
-                    color: Theme.outlineVariant
-                    anchors.right: parent.right
-                    height: Math.max(20, contentViewport.height * contentViewport.height / contentViewport.contentHeight)
-                    y: (contentViewport.height - height) * contentViewport.contentY / Math.max(1, contentViewport.contentHeight - contentViewport.height)
-                }
 
             }
 
-            component ChoiceRow: Rectangle {
+            component ChoiceRow: DButton {
                 id: choice
 
                 property string label: ""
                 property string detail: ""
-                property string icon: "monitor"
+                property string symbolName: "monitor"
                 property bool selected: false
 
                 signal triggered()
 
                 width: parent.width
                 height: Theme.fontSizeMedium + Theme.spacingXL * 2
-                radius: Theme.cornerRadius
-                color: selected ? Theme.primaryContainer : (hover.hovered ? Theme.chipSurface : Theme.cardSurface)
-                border.width: activeFocus ? 2 : 0
-                border.color: Theme.primary
-                opacity: enabled ? 1 : 0.5
-                activeFocusOnTab: enabled
-                Accessible.role: Accessible.Button
+                backgroundColor: selected ? Theme.primaryContainer : Theme.cardSurface
+                textColor: selected ? Theme.onPrimaryContainer : Theme.surfaceText
                 Accessible.name: label + ", " + detail
                 Accessible.description: selected ? "Selected" : "Select display"
-                Accessible.onPressAction: {
-                    if (enabled)
-                        triggered();
-
-                }
-                Keys.onReturnPressed: (event) => {
-                    if (enabled)
-                        triggered();
-
-                    event.accepted = true;
-                }
-                Keys.onEnterPressed: (event) => {
-                    if (enabled)
-                        triggered();
-
-                    event.accepted = true;
-                }
-                Keys.onSpacePressed: (event) => {
-                    if (enabled)
-                        triggered();
-
-                    event.accepted = true;
-                }
-
-                HoverHandler {
-                    id: hover
-                }
-
-                TapHandler {
-                    onTapped: {
-                        if (choice.enabled)
-                            choice.triggered();
-
-                    }
-                }
+                onClicked: triggered()
 
                 Rectangle {
                     id: iconBox
@@ -1456,7 +1376,7 @@ PluginComponent {
 
                     DIcon {
                         anchors.centerIn: parent
-                        name: choice.icon
+                        name: choice.symbolName
                         size: Theme.iconSizeMedium
                         color: choice.selected ? Theme.onPrimary : Theme.surfaceText
                     }
@@ -1503,53 +1423,29 @@ PluginComponent {
 
             }
 
-            component ModeButton: Rectangle {
+            component ModeButton: DButton {
                 id: modeButton
 
                 property string label: ""
-                property string icon: ""
+                property string symbolName: ""
                 property bool selected: false
 
                 signal triggered()
 
                 width: (parent.width - 2 * Theme.spacingXS) / 3
                 height: Theme.iconSizeMedium + Theme.spacingM * 2
-                radius: Theme.cornerRadius
-                color: selected ? Theme.primaryContainer : (hover.hovered ? Theme.chipSurface : "transparent")
-                border.width: activeFocus ? 2 : 0
-                border.color: Theme.primary
-                activeFocusOnTab: true
-                Accessible.role: Accessible.Button
+                backgroundColor: selected ? Theme.primaryContainer : Theme.cardSurface
+                textColor: selected ? Theme.onPrimaryContainer : Theme.surfaceText
                 Accessible.name: label
                 Accessible.description: selected ? "Selected" : "Switch mode"
-                Accessible.onPressAction: triggered()
-                Keys.onReturnPressed: (event) => {
-                    triggered();
-                    event.accepted = true;
-                }
-                Keys.onEnterPressed: (event) => {
-                    triggered();
-                    event.accepted = true;
-                }
-                Keys.onSpacePressed: (event) => {
-                    triggered();
-                    event.accepted = true;
-                }
-
-                HoverHandler {
-                    id: hover
-                }
-
-                TapHandler {
-                    onTapped: modeButton.triggered()
-                }
+                onClicked: triggered()
 
                 Row {
                     anchors.centerIn: parent
                     spacing: Theme.spacingXS
 
                     DIcon {
-                        name: modeButton.icon
+                        name: modeButton.symbolName
                         size: Theme.iconSizeMedium
                         color: modeButton.selected ? Theme.primary : Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter

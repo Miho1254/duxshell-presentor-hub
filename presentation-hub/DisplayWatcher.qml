@@ -644,7 +644,25 @@ PluginComponent {
         onTriggered: root.identifyOutput = ""
     }
 
+    // The widget and daemon share one QML engine. Keep the IPC handlers for
+    // external clients, while allowing the widget to call the same actions directly.
+    function request(action, args) {
+        switch (action) {
+        case "startPresentation": return commandHandler.startPresentation(args[0], args[1], args[2], args[3], args[4]);
+        case "endSession": return commandHandler.endSession();
+        case "showCover": return commandHandler.showCover(args[0]);
+        case "hideCover": return commandHandler.hideCover();
+        case "identify": return commandHandler.identify(args[0]);
+        case "startMirror": return commandHandler.startMirror(args[0], args[1]);
+        case "stopMirror": return commandHandler.stopMirror();
+        case "checkMirror": return commandHandler.checkMirror();
+        default: return "Unknown action";
+        }
+    }
+
     IpcHandler {
+        id: commandHandler
+
         function status() : string {
             return JSON.stringify({
                 "session": PluginService.getGlobalVar("presentationHub", "session", {
@@ -825,8 +843,8 @@ PluginComponent {
 
         layerNamespace: "dms:plugins:presentationHub"
         useOverlayLayer: true
-        modalWidth: Math.min(460, Math.max(300, screenWidth - Theme.spacingXL * 2))
-        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : 270
+        modalWidth: Math.min(Theme.fontSizeMedium * 33, Math.max(Theme.fontSizeMedium * 21, screenWidth - Theme.spacingXL * 2))
+        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : Theme.fontSizeMedium * 19
         closeOnBackgroundClick: false
         positioning: "center"
         onBackgroundClicked: () => {
@@ -989,8 +1007,8 @@ PluginComponent {
 
         layerNamespace: "dms:plugins:presentationHub-window"
         useOverlayLayer: true
-        modalWidth: Math.min(480, Math.max(300, screenWidth - Theme.spacingXL * 2))
-        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : 320
+        modalWidth: Math.min(Theme.fontSizeMedium * 34, Math.max(Theme.fontSizeMedium * 21, screenWidth - Theme.spacingXL * 2))
+        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : Theme.fontSizeMedium * 23
         closeOnBackgroundClick: false
         closeOnEscapeKey: !root.moving
         positioning: "center"
