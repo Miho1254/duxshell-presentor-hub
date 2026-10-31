@@ -818,15 +818,16 @@ PluginComponent {
         target: "presentationHub"
     }
 
-    DankModal {
+    DModal {
         id: displayPrompt
 
         property string outputName: ""
 
         layerNamespace: "dms:plugins:presentationHub"
         useOverlayLayer: true
-        modalWidth: 420
-        modalHeight: 185
+        modalWidth: Math.min(460, Math.max(300, screenWidth - Theme.spacingXL * 2))
+        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : 270
+        closeOnBackgroundClick: false
         positioning: "center"
         onBackgroundClicked: () => {
             return close();
@@ -839,57 +840,136 @@ PluginComponent {
 
         content: Component {
             Item {
-                implicitHeight: 185
+                implicitHeight: displayBody.implicitHeight + Theme.spacingXL * 2
                 width: displayPrompt.modalWidth
 
                 Column {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingL
-                    spacing: Theme.spacingM
+                    id: displayBody
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXL
+                    spacing: Theme.spacingL
 
-                    StyledText {
-                        text: "Display connected"
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeLarge
-                        font.weight: Font.Medium
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingM
+
+                        Rectangle {
+                            width: Theme.iconSizeLarge + Theme.spacingM * 2
+                            height: width
+                            radius: Theme.cornerRadiusL
+                            color: Theme.primaryContainer
+
+                            DIcon {
+                                anchors.centerIn: parent
+                                name: "connected_tv"
+                                size: Theme.iconSize
+                                color: Theme.onPrimaryContainer
+                            }
+                        }
+
+                        Column {
+                            width: Math.max(0, parent.width - Theme.iconSizeLarge - Theme.spacingM * 3)
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.spacingXS
+
+                            StyledText {
+                                width: parent.width
+                                text: "Use this display for your audience?"
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeLarge
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.WordWrap
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: "A projector, TV, or monitor has connected. Choose whether to use it for your presentation."
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeMedium
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: displayDetails.implicitHeight + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: Theme.cardSurface
+
+                        Row {
+                            id: displayDetails
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            DIcon {
+                                name: "monitor"
+                                size: Theme.iconSizeMedium
+                                color: Theme.primary
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            Column {
+                                width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingM)
+                                spacing: Theme.spacingXXS
+
+                                StyledText {
+                                    text: "Connected display"
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    text: displayPrompt.outputName
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
                     }
 
                     StyledText {
-                        text: "Use " + displayPrompt.outputName + " for presentations?"
                         width: parent.width
-                        wrapMode: Text.WordWrap
+                        text: "This only selects the display. Nothing is shared yet."
                         color: Theme.surfaceVariantText
+                        font.pixelSize: Theme.fontSizeSmall
+                        wrapMode: Text.WordWrap
                     }
 
                     Row {
+                        x: Math.max(0, parent.width - width)
                         spacing: Theme.spacingS
 
                         DButton {
                             text: "Not now"
+                            backgroundColor: Theme.secondaryContainer
+                            textColor: Theme.onSecondaryContainer
                             onClicked: displayPrompt.close()
                         }
 
                         DButton {
-                            text: "Use for presentations"
+                            text: "Use display"
                             onClicked: {
                                 if (root.knownOutputs.includes(displayPrompt.outputName))
                                     PluginService.savePluginData("presentationHub", "presentationOutput", displayPrompt.outputName);
-
                                 displayPrompt.close();
                             }
                         }
-
                     }
-
                 }
-
             }
-
         }
-
     }
 
-    DankModal {
+    DModal {
         id: windowPrompt
 
         property var windowId: null
@@ -897,11 +977,22 @@ PluginComponent {
         property string targetOutput: ""
         property string errorMessage: ""
         property bool isFullscreenBrowser: false
+        property string selectedSuggestionMode: "always"
+
+        Connections {
+            target: PluginService
+            function onPluginDataChanged(pluginId) {
+                if (pluginId === "presentationHub")
+                    windowPrompt.selectedSuggestionMode = root.suggestionMode();
+            }
+        }
 
         layerNamespace: "dms:plugins:presentationHub-window"
         useOverlayLayer: true
-        modalWidth: 440
-        modalHeight: 225
+        modalWidth: Math.min(480, Math.max(300, screenWidth - Theme.spacingXL * 2))
+        modalHeight: contentLoader.item ? contentLoader.item.implicitHeight : 320
+        closeOnBackgroundClick: false
+        closeOnEscapeKey: !root.moving
         positioning: "center"
         onBackgroundClicked: () => {
             if (!root.moving)
@@ -909,61 +1000,195 @@ PluginComponent {
 
         }
         onShouldBeVisibleChanged: {
-            if (!shouldBeVisible)
+            if (shouldBeVisible)
+                selectedSuggestionMode = root.suggestionMode();
+            else
                 Qt.callLater(root.nextPrompt);
-
         }
 
         content: Component {
             Item {
-                implicitHeight: 225
+                implicitHeight: windowBody.implicitHeight + Theme.spacingXL * 2
                 width: windowPrompt.modalWidth
 
                 Column {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingL
-                    spacing: Theme.spacingM
+                    id: windowBody
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXL
+                    spacing: Theme.spacingL
 
-                    StyledText {
-                        text: windowPrompt.isFullscreenBrowser ? "Fullscreen browser detected" : "Presentation window detected"
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeLarge
-                        font.weight: Font.Medium
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingM
+
+                        Rectangle {
+                            width: Theme.iconSizeLarge + Theme.spacingM * 2
+                            height: width
+                            radius: Theme.cornerRadiusL
+                            color: Theme.primaryContainer
+
+                            DIcon {
+                                anchors.centerIn: parent
+                                name: "present_to_all"
+                                size: Theme.iconSize
+                                color: Theme.onPrimaryContainer
+                            }
+                        }
+
+                        Column {
+                            width: Math.max(0, parent.width - Theme.iconSizeLarge - Theme.spacingM * 3)
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.spacingXS
+
+                            StyledText {
+                                width: parent.width
+                                text: "Move to audience display?"
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeLarge
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.WordWrap
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: windowPrompt.isFullscreenBrowser ? "A browser window entered fullscreen." : "A presentation window was detected."
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeMedium
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: windowDetails.implicitHeight + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: Theme.cardSurface
+
+                        Column {
+                            id: windowDetails
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            Column {
+                                width: parent.width
+                                spacing: Theme.spacingXXS
+                                StyledText {
+                                    text: "Window"
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: windowPrompt.windowTitle
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.Wrap
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                }
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: Theme.spacingS
+                                DIcon {
+                                    name: "monitor"
+                                    size: Theme.iconSizeMedium
+                                    color: Theme.primary
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                StyledText {
+                                    width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingS)
+                                    text: "Audience display: " + windowPrompt.targetOutput
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    elide: Text.ElideRight
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        visible: windowPrompt.isFullscreenBrowser
+                        width: parent.width
+                        spacing: Theme.spacingS
+
+                        StyledText {
+                            text: "Browser fullscreen prompts"
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                        }
+
+                        Row {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+
+                            Repeater {
+                                model: [
+                                    { label: "Always", value: "always" },
+                                    { label: "In session", value: "session" },
+                                    { label: "Manual only", value: "manual" }
+                                ]
+
+                                DButton {
+                                    required property var modelData
+                                    readonly property bool selected: windowPrompt.selectedSuggestionMode === modelData.value
+                                    width: (parent.width - Theme.spacingXS * 2) / 3
+                                    maximumWidth: width
+                                    wrapText: true
+                                    text: modelData.label
+                                    enabled: !root.moving
+                                    backgroundColor: selected ? Theme.primaryContainer : Theme.secondaryContainer
+                                    textColor: selected ? Theme.onPrimaryContainer : Theme.onSecondaryContainer
+                                    Accessible.role: Accessible.RadioButton
+                                    Accessible.checked: selected
+                                    onClicked: PluginService.savePluginData("presentationHub", "suggestionMode", modelData.value)
+                                }
+                            }
+                        }
                     }
 
                     StyledText {
-                        text: windowPrompt.windowTitle
+                        visible: windowPrompt.isFullscreenBrowser
                         width: parent.width
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                        wrapMode: Text.WordWrap
-                        color: Theme.surfaceText
-                    }
-
-                    StyledText {
-                        text: "Move this window to " + windowPrompt.targetOutput + "?"
-                        width: parent.width
-                        wrapMode: Text.WordWrap
+                        text: windowPrompt.selectedSuggestionMode === "session"
+                            ? "Ask only during a session started with Start presentation. LibreOffice suggestions can still appear outside a session."
+                            : windowPrompt.selectedSuggestionMode === "manual"
+                              ? "Turn off automatic window suggestions, including LibreOffice."
+                              : "Ask when a browser enters fullscreen."
                         color: Theme.surfaceVariantText
+                        font.pixelSize: Theme.fontSizeSmall
+                        wrapMode: Text.WordWrap
                     }
 
                     StyledText {
                         visible: windowPrompt.errorMessage !== ""
-                        text: windowPrompt.errorMessage
                         width: parent.width
+                        text: windowPrompt.errorMessage
                         wrapMode: Text.WordWrap
                         color: Theme.error
+                        font.pixelSize: Theme.fontSizeSmall
                     }
 
                     Row {
+                        x: Math.max(0, parent.width - width)
                         spacing: Theme.spacingS
-
                         DButton {
                             text: "Not now"
                             enabled: !root.moving
+                            backgroundColor: Theme.secondaryContainer
+                            textColor: Theme.onSecondaryContainer
                             onClicked: windowPrompt.close()
                         }
-
                         DButton {
                             text: root.moving ? "Moving…" : "Move window"
                             enabled: !root.moving
@@ -971,20 +1196,15 @@ PluginComponent {
                                 root.moving = true;
                                 const id = windowPrompt.windowId;
                                 const output = windowPrompt.targetOutput;
-                                const original = root.knownWindows.find((w) => {
-                                    return w.id === id;
-                                });
+                                const original = root.knownWindows.find(w => w.id === id);
                                 const origin = original ? original.output : "";
-                                mover.move(id, output, (success) => {
+                                mover.move(id, output, success => {
                                     root.moving = false;
                                     if (success) {
                                         if (origin && origin !== output)
                                             PluginService.setGlobalVar("presentationHub", "lastMoved", {
-                                            "id": id,
-                                            "output": origin,
-                                            "target": output
-                                        });
-
+                                                "id": id, "output": origin, "target": output
+                                            });
                                         windowPrompt.close();
                                         root.refreshOutputs();
                                     } else {
@@ -993,15 +1213,10 @@ PluginComponent {
                                 });
                             }
                         }
-
                     }
-
                 }
-
             }
-
         }
-
     }
 
     component MoveController: QtObject {
