@@ -552,7 +552,7 @@ PluginComponent {
                                 Column {
                                     width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingS - (stopMirrorButton.visible ? stopMirrorButton.width + Theme.spacingS : 0))
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 2
+                                    spacing: Theme.spacingXXS
 
                                     StyledText {
                                         width: parent.width
@@ -874,7 +874,7 @@ PluginComponent {
                                                 anchors.right: parent.right
                                                 anchors.rightMargin: Theme.spacingM
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                spacing: 2
+                                                spacing: Theme.spacingXXS
 
                                                 StyledText {
                                                     width: parent.width
@@ -1202,7 +1202,7 @@ PluginComponent {
                                     Column {
                                         width: Math.max(0, parent.width - Theme.iconSizeMedium - Theme.spacingS * 2 - identifyButton.width)
                                         anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 2
+                                        spacing: Theme.spacingXXS
 
                                         StyledText {
                                             width: parent.width
@@ -1469,7 +1469,7 @@ PluginComponent {
                     anchors.right: checkIcon.left
                     anchors.rightMargin: Theme.spacingS
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2
+                    spacing: Theme.spacingXXS
 
                     StyledText {
                         width: parent.width

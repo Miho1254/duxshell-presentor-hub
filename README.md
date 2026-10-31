@@ -40,7 +40,7 @@ cd duxshell-presentor-hub
 ./scripts/install.sh
 ```
 
-On other distributions, install Git and use the same download and install commands. The installer itself runs as your normal user; it does not install packages or use `sudo`.
+On other distributions, install Git and use the same download and install commands. The plugin has been tested on CachyOS; other distributions have not yet been verified. The installer itself runs as your normal user; it does not install packages or use `sudo`.
 
 Next, open **DMS Settings → Plugins**, scan for plugins if needed, enable **Presentation Hub**, and add its widget to the bar. The installer uses `${XDG_CONFIG_HOME:-$HOME/.config}/dms/plugins/presentation-hub`. It refuses to overwrite an existing installation, including a development symlink or another plugin directory with the same ID.
 
